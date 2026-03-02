@@ -4,12 +4,23 @@
         {
             "src": "auth_server.py",
             "use": "@vercel/python"
+        },
+        {
+            "src": "**/*.{html,js,css,json,png,jpg,gif,svg,xlsx}",
+            "use": "@vercel/static"
         }
     ],
     "routes": [
         {
-            "src": "/(.*)",
+            "src": "/(register|login|redeem|change_password)",
             "dest": "auth_server.py"
+        },
+        {
+            "handle": "filesystem"
+        },
+        {
+            "src": "/(.*)",
+            "dest": "index.html"
         }
     ]
 }
