@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>新旧法条对照表</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f7fa;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        }
+
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+            font-size: 24px;
+            margin-bottom: 24px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #eee;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            table-layout: fixed;
+        }
+
+        th,
+        td {
+            border: 1px solid #e0e0e0;
+            padding: 12px 15px;
+            text-align: center;
+            font-size: 15px;
+            word-wrap: break-word;
+        }
+
+        th {
+            background-color: #f8f9fa;
+            font-weight: 600;
+            color: #495057;
+            position: sticky;
+            top: 0;
+            box-shadow: 0 1px 0 #e0e0e0;
+            z-index: 10;
+        }
+
+        tr:nth-child(even) {
+            background-color: #fbfcfd;
+        }
+
+        tr:hover {
+            background-color: #f4f6f8;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 50px;
+            color: #888;
+            font-size: 16px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            font-size: 16px;
+            color: #666;
+        }
+
+        .highlight {
+            color: #d9534f;
+            font-weight: bold;
+        }
+
+        th:first-child,
+        td:first-child {
+            width: 60px;
+            color: #888;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+            }
+
+            th,
+            td {
+                padding: 8px 10px;
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1 id="page-title">法条对照表</h1>
+        <div id="table-container">
+            <div class="loading">正在加载对照数据...</div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const urlParams = new URLSearchParams(window.location.search);
+            const lawId = urlParams.get('id');
+            const container = document.getElementById('table-container');
+            const titleEl = document.getElementById('page-title');
+
+            if (!lawId) {
+                container.innerHTML = '<div class="empty-state">✅ 缺少查询参数，请输入有效链接。</div>';
+                return;
+            }
+
+            fetch('data/compare_' + lawId + '.json')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('未找到该法律的对照表数据');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.title) {
+                        titleEl.textContent = data.title;
+                        document.title = data.title;
+                    }
+
+                    let html = '<table><thead><tr>';
+                    html += '<th style="width:50px;color:#aaa">序号</th>';
+                    data.headers.forEach(header => {
+                        html += '<th>' + header + '</th>';
+                    });
+                    html += '</tr></thead><tbody>';
+
+                    data.rows.forEach((row, idx) => {
+                        html += '<tr>';
+                        html += '<td style="color:#aaa;font-size:13px">' + (idx + 1) + '</td>';
+                        // row 是数组 [col1, col2, ...]
+                        if (Array.isArray(row)) {
+                            row.forEach(cell => {
+                                const isEmpty = !cell || cell === '';
+                                html += '<td' + (isEmpty ? ' style="color:#ccc"' : '') + '>'
+                                    + (isEmpty ? '—' : cell) + '</td>';
+                            });
+                        } else {
+                            // 兼容旧格式 {id, old, new}
+                            html += '<td>' + (row.id || '-') + '</td>';
+                            html += '<td' + (row.old ? '' : ' class="highlight"') + '>' + (row.old || '（新增）') + '</td>';
+                            html += '<td' + (row.new ? '' : ' class="highlight"') + '>' + (row.new || '（删除）') + '</td>';
+                        }
+                        html += '</tr>';
+                    });
+                    html += '</tbody></table>';
+                    container.innerHTML = html;
+                })
+                .catch(err => {
+                    container.innerHTML = '<div class="empty-state">⚠️ ' + err.message + '，可能该法律暂无对照关系数据。</div>';
+                });
+        });
+    </script>
+</body>
+
+</html>

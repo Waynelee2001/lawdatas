@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>法条收藏</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            font-family: 'Times New Roman', SimSun, serif;
+            overflow: hidden;
+        }
+
+        .layout {
+            display: flex;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* 顶部导航 */
+        .head {
+            display: flex;
+            align-items: center;
+            height: 44px;
+            background: linear-gradient(180deg, #c9a86c 0%, #b8956a 100%);
+            padding: 0 12px;
+            color: white;
+            gap: 4px;
+            font-size: 15px;
+            font-weight: bold;
+            flex-shrink: 0;
+            white-space: nowrap;
+            overflow: hidden;
+        }
+
+        .exit-btn {
+            font-size: 13px;
+            color: white;
+            text-decoration: none;
+            padding: 4px 10px;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            transition: background 0.2s;
+        }
+
+        .exit-btn:hover {
+            background: rgba(255, 255, 255, 0.32);
+        }
+
+        /* 左侧边栏 */
+        .sidebar {
+            width: 300px;
+            min-width: 200px;
+            max-width: 800px;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #d4c4b0;
+            background: #faf8f4;
+            position: relative;
+            /* 为内部绝对定位的resizer做准备 */
+        }
+
+        .sidebar-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px 0;
+        }
+
+        .sidebar-content::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .sidebar-content::-webkit-scrollbar-thumb {
+            background: #ccc;
+            border-radius: 3px;
+        }
+
+        .cat-item {
+            font-weight: bold;
+            font-size: 14px;
+            color: #5a3e1b;
+            padding: 14px 14px 6px 14px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .cat-item:hover {
+            color: #8b6914;
+        }
+
+        .cat-item::before {
+            content: '▶';
+            font-size: 10px;
+            display: inline-block;
+            transition: transform 0.2s;
+            margin-right: 6px;
+        }
+
+        .cat-item.expanded::before {
+            transform: rotate(90deg);
+        }
+
+        /* 侧边栏内容区整体支持横向滚动 */
+        .sidebar-content {
+            flex: 1;
+            overflow-y: auto;
+            overflow-x: auto;
+            padding-bottom: 20px;
+        }
+
+        /* 侧边栏滚动条样式 */
+        .sidebar-content::-webkit-scrollbar {
+            width: 4px;
+            /* 纵向滚动条宽度 */
+            height: 4px;
+            /* 横向滚动条高度 */
+        }
+
+        .sidebar-content::-webkit-scrollbar-thumb {
+            background: #ccc;
+            border-radius: 2px;
+        }
+
+        .cat-laws {
+            display: none;
+            padding-left: 14px;
+            /* 确保长内容不会导致换行，为父级的overflow-x: auto提供空间 */
+            white-space: nowrap;
+        }
+
+        .cat-laws.show {
+            display: block;
+        }
+
+        .law-item {
+            font-size: 13px;
+            color: #6b4c1a;
+            padding: 5px 14px;
+            cursor: pointer;
+            border-radius: 4px;
+            margin: 1px 8px 1px 0;
+            white-space: nowrap;
+        }
+
+        .law-item:hover {
+            background: rgba(201, 168, 108, 0.2);
+        }
+
+        .law-item.active {
+            background: rgba(201, 168, 108, 0.35);
+            font-weight: bold;
+        }
+
+        .sidebar-empty {
+            text-align: center;
+            color: #aaa;
+            padding: 40px 20px;
+            font-size: 14px;
+        }
+
+        /* 拖拽调整区域宽度分隔线 */
+        #resizer {
+            width: 5px;
+            cursor: col-resize;
+            background: transparent;
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            right: -2px;
+            /* 居中覆盖在border上 */
+            z-index: 10;
+        }
+
+        #resizer:hover,
+        #resizer.active {
+            background: rgba(201, 168, 108, 0.5);
+        }
+
+        /* 右侧主内容区 */
+        .main {
+            flex: 1;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .main-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px 30px;
+        }
+
+        .main-content::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .main-content::-webkit-scrollbar-thumb {
+            background: #ccc;
+            border-radius: 4px;
+        }
+
+        .content-empty {
+            text-align: center;
+            color: #999;
+            padding: 80px 20px;
+            font-size: 16px;
+        }
+
+        .content-empty small {
+            color: #bbb;
+            font-size: 13px;
+        }
+
+        /* 法条卡片 */
+        .article-card {
+            margin: 12px 0;
+            padding: 0;
+            background: #faf8f4;
+            border-radius: 6px;
+            border-left: 3px solid #c9a86c;
+            overflow: hidden;
+        }
+
+        .article-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 16px;
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.2s;
+        }
+
+        .article-header:hover {
+            background: rgba(201, 168, 108, 0.1);
+        }
+
+        .article-header .toggle-icon {
+            font-size: 10px;
+            color: #999;
+            margin-right: 8px;
+            display: inline-block;
+            transition: transform 0.2s;
+        }
+
+        .article-header.expanded .toggle-icon {
+            transform: rotate(90deg);
+        }
+
+        .article-num {
+            font-weight: bold;
+            color: #8b6914;
+            font-size: 15px;
+            cursor: pointer;
+            text-decoration: underline;
+        }
+
+        .article-num:hover {
+            color: #c9a86c;
+        }
+
+        .fav-star {
+            font-size: 14px;
+            color: #d19a3b;
+            text-shadow: 0 0 4px rgba(209, 154, 59, 0.4);
+            margin-left: 8px;
+            display: inline-block;
+            vertical-align: middle;
+            position: relative;
+            top: -1px;
+            user-select: none;
+        }
+
+        .article-annot {
+            color: #b8860b;
+            font-size: 13px;
+            margin-left: 6px;
+        }
+
+        .remove-btn {
+            color: #ccc;
+            cursor: pointer;
+            font-size: 16px;
+            padding: 0 6px;
+            line-height: 1;
+            flex-shrink: 0;
+        }
+
+        .remove-btn:hover {
+            color: #e74c3c;
+        }
+
+        .article-body {
+            display: none;
+            padding: 0 16px 12px 16px;
+            font-size: 14px;
+            color: #333;
+            line-height: 1.8;
+            border-top: 1px solid rgba(201, 168, 108, 0.15);
+        }
+
+        .article-body.show {
+            display: block;
+        }
+
+        .article-body p {
+            margin: 4px 0;
+        }
+
+        .all-articles-title {
+            font-size: 16px;
+            font-weight: bold;
+            color: #5a3e1b;
+            padding: 10px 0 8px 0;
+            border-bottom: 2px solid rgba(201, 168, 108, 0.3);
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="layout">
+        <!-- 左侧边栏 -->
+        <div class="sidebar">
+            <div class="head">
+                <a href="annotation.html" class="exit-btn">← 退出收藏</a>
+            </div>
+            <div class="sidebar-content" id="sidebarContent">
+                <div class="sidebar-empty">暂无收藏</div>
+            </div>
+            <!-- 拖拽把手（放在sidebar内部） -->
+            <div id="resizer"></div>
+        </div>
+
+        <!-- 右侧主内容区 -->
+        <div class="main">
+            <div class="head" style="justify-content: center;">
+                <span id="mainTitle">法条收藏</span>
+            </div>
+            <div class="main-content" id="mainContent">
+                <div class="content-empty">📌 请从左侧选择法律查看收藏的法条<br><small>在标注版中点击法条前的 ★ 即可收藏</small></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/jquery.min.js"></script>
+    <script>
+        var FAV_STORAGE_KEY = 'law_favorites';
+        var DATA_PATH = 'data/laws_annotation/';
+        var lawContentCache = {};
+        var currentSelectedLaw = null;
+
+        function getFavorites() {
+            try { return JSON.parse(localStorage.getItem(FAV_STORAGE_KEY)) || {}; }
+            catch (e) { return {}; }
+        }
+
+        function saveFavorites(favs) {
+            localStorage.setItem(FAV_STORAGE_KEY, JSON.stringify(favs));
+        }
+
+        function articleNumToInt(artStr) {
+            var numMap = { '零': 0, '〇': 0, '○': 0, '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10, '百': 100, '千': 1000 };
+            var m = artStr.match(/第(.+?)条/);
+            if (!m) return 0;
+            var s = m[1], result = 0, temp = 0;
+            for (var i = 0; i < s.length; i++) {
+                var v = numMap[s[i]];
+                if (v === undefined) return 0;
+                if (v === 10 || v === 100 || v === 1000) { if (temp === 0) temp = 1; result += temp * v; temp = 0; }
+                else { temp = v; }
+            }
+            return result + temp;
+        }
+
+        // 初始化侧边栏
+        function initSidebar() {
+            var favs = getFavorites();
+            var sidebar = $('#sidebarContent');
+            var categories = Object.keys(favs);
+
+            if (categories.length === 0) {
+                sidebar.html('<div class="sidebar-empty">📌 暂无收藏<br><small>在标注版中点击法条标题前的 ★ 收藏</small></div>');
+                return;
+            }
+
+            var html = '';
+            categories.forEach(function (cat) {
+                html += '<div class="cat-item expanded" data-cat="' + cat + '">' + cat + '</div>';
+                html += '<div class="cat-laws show">';
+                for (var lawName in favs[cat]) {
+                    var lawData = favs[cat][lawName];
+                    var artCount = Object.keys(lawData.articles).length;
+                    html += '<div class="law-item" data-cat="' + cat + '" data-law="' + lawName.replace(/"/g, '&quot;') + '" data-law-id="' + lawData.lawId + '">';
+                    html += lawName + ' <span style="color:#aaa;font-size:11px;">(' + artCount + ')</span>';
+                    html += '</div>';
+                }
+                html += '</div>';
+            });
+
+            sidebar.html(html);
+
+            // 绑定分类折叠
+            sidebar.on('click', '.cat-item', function () {
+                $(this).toggleClass('expanded');
+                $(this).next('.cat-laws').toggleClass('show');
+            });
+
+            // 绑定法律点击
+            sidebar.on('click', '.law-item', function (e) {
+                e.stopPropagation();
+                var cat = $(this).data('cat');
+                var lawName = $(this).data('law');
+                var lawId = $(this).data('law-id');
+
+                $('.law-item').removeClass('active');
+                $(this).addClass('active');
+
+                loadLawArticles(cat, lawName, lawId);
+            });
+
+            // 默认选中第一部法律
+            sidebar.find('.law-item').first().click();
+        }
+
+        // 加载某部法律的收藏法条
+        function loadLawArticles(category, lawName, lawId) {
+            currentSelectedLaw = { category: category, lawName: lawName, lawId: lawId };
+            var favs = getFavorites();
+            var lawFav = favs[category] && favs[category][lawName];
+
+            if (!lawFav || !lawFav.articles || Object.keys(lawFav.articles).length === 0) {
+                $('#mainTitle').text('法条收藏');
+                $('#mainContent').html('<div class="content-empty">该法律下暂无收藏法条</div>');
+                return;
+            }
+
+            $('#mainTitle').text(lawName);
+            $('#mainContent').html('<div class="content-empty">正在加载...</div>');
+
+            var localUrl = DATA_PATH + lawId + '.json';
+            if (lawContentCache[localUrl]) {
+                renderArticles(lawFav, lawContentCache[localUrl], category, lawName);
+            } else {
+                $.ajax({
+                    url: localUrl + '?_=' + new Date().getTime(),
+                    dataType: 'json',
+                    cache: false,
+                    success: function (data) {
+                        lawContentCache[localUrl] = data;
+                        renderArticles(lawFav, data, category, lawName);
+                    },
+                    error: function () {
+                        $('#mainContent').html('<div class="content-empty">加载失败</div>');
+                    }
+                });
+            }
+        }
+
+        // 渲染法条列表
+        function renderArticles(lawFav, jsonData, category, lawName) {
+            var articles = lawFav.articles;
+            var sortedArts = Object.keys(articles).sort(function (a, b) {
+                return articleNumToInt(a) - articleNumToInt(b);
+            });
+
+            var html = '';
+            sortedArts.forEach(function (artNum) {
+                var annot = articles[artNum];
+                var contentHtml = getArticleContent(jsonData, artNum);
+                var lawId = lawFav.lawId;
+
+                html += '<div class="article-card" id="card-' + artNum.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '') + '">';
+                html += '<div class="article-header expanded" onclick="$(this).toggleClass(\'expanded\'); $(this).next().toggleClass(\'show\')">';
+                html += '<span>';
+                html += '<span class="toggle-icon">▶</span>';
+                html += '<a class="article-num" href="annotation.html?law=' + lawId + '&article=' + encodeURIComponent(artNum) + '" target="_blank" onclick="event.stopPropagation();" title="在新标签页查看原文">' + artNum + '</a>';
+                if (annot) {
+                    html += '<span class="article-annot">【' + annot + '】</span>';
+                }
+                html += '<span class="fav-star">★</span>';
+                html += '</span>';
+                html += '<span class="remove-btn" onclick="removeArticle(\'' + category.replace(/'/g, "\\'") + '\', \'' + lawName.replace(/'/g, "\\'") + '\', \'' + artNum + '\'); event.stopPropagation();" title="取消收藏">✕</span>';
+                html += '</div>';
+                html += '<div class="article-body show">' + contentHtml + '</div>';
+                html += '</div>';
+            });
+
+            $('#mainContent').html(html);
+        }
+
+        // 提取法条正文内容
+        function getArticleContent(jsonData, articleNum) {
+            if (!jsonData || !jsonData.content) return '<p>内容加载失败</p>';
+            var collecting = false;
+            var contentParts = [];
+
+            for (var i = 0; i < jsonData.content.length; i++) {
+                var text = (jsonData.content[i].lawWebContent || '').trim();
+                if (!text) continue;
+                var lines = text.split('\n');
+
+                for (var j = 0; j < lines.length; j++) {
+                    var line = lines[j].trim();
+                    if (!line) continue;
+
+                    if (line.indexOf(articleNum) === 0) {
+                        collecting = true;
+                        var rest = line.substring(articleNum.length).trim().replace(/^【[^】]*】\s*/, '');
+                        if (rest) contentParts.push(rest);
+                        continue;
+                    }
+
+                    if (collecting) {
+                        // 遇到下一个法条、章节编、中文数字序号标题或阿拉伯数字小标题时停止收集
+                        if (/^第[一二三四五六七八九十百千万零○〇]+条/.test(line) ||
+                            /^第[一二三四五六七八九十百千]+[编章节]/.test(line) ||
+                            /^[一二三四五六七八九十]+、/.test(line) ||
+                            /^\d+\.\s/.test(line)) {
+                            collecting = false;
+                            break;
+                        }
+                        contentParts.push(line);
+                    }
+                }
+                if (!collecting && contentParts.length > 0) break;
+            }
+
+            if (contentParts.length === 0) return '<p>（无正文内容）</p>';
+            return contentParts.map(function (p) { return '<p>' + p + '</p>'; }).join('');
+        }
+
+        // 删除收藏
+        function removeArticle(category, lawName, articleNum) {
+            var favs = getFavorites();
+            if (favs[category] && favs[category][lawName] && favs[category][lawName].articles) {
+                delete favs[category][lawName].articles[articleNum];
+                if (Object.keys(favs[category][lawName].articles).length === 0) {
+                    delete favs[category][lawName];
+                    if (Object.keys(favs[category]).length === 0) {
+                        delete favs[category];
+                    }
+                    // 需要刷新侧边栏
+                    saveFavorites(favs);
+                    initSidebar();
+                    return;
+                }
+            }
+            saveFavorites(favs);
+            // 从页面移除该卡片
+            $('#card-' + articleNum.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '')).fadeOut(200, function () { $(this).remove(); });
+            // 更新侧边栏计数
+            initSidebar();
+            // 重新选中当前法律
+            if (currentSelectedLaw) {
+                setTimeout(function () {
+                    $('.law-item[data-law-id="' + currentSelectedLaw.lawId + '"]').addClass('active');
+                }, 50);
+            }
+        }
+
+        $(document).ready(function () {
+            initSidebar();
+
+            // 侧边栏拖拽可调宽度功能
+            var isResizing = false;
+            var startX, startWidth;
+            var sidebar = $('.sidebar');
+            var resizer = $('#resizer');
+
+            resizer.on('mousedown', function (e) {
+                isResizing = true;
+                startX = e.clientX;
+                startWidth = sidebar.outerWidth();
+                $(this).addClass('active');
+                $('body').css('user-select', 'none');
+                $('body').css('cursor', 'col-resize');
+            });
+
+            $(document).on('mousemove', function (e) {
+                if (!isResizing) return;
+                var newWidth = startWidth + (e.clientX - startX);
+                // 限制侧边栏最小和最大宽度
+                if (newWidth > 200 && newWidth < 800) {
+                    sidebar.css('width', newWidth + 'px');
+                }
+            }).on('mouseup', function () {
+                if (isResizing) {
+                    isResizing = false;
+                    resizer.removeClass('active');
+                    $('body').css('user-select', '');
+                    $('body').css('cursor', '');
+                }
+            });
+        });
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+auth_server.log
+http_server.log
+users.json
+codes.json
+.vscode/
+.trae/

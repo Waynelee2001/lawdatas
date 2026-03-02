@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>法考法条库</title>
+    <link rel="stylesheet" href="css/zTreeStyle.css?v=11">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            font-family: 'Times New Roman', SimSun, serif;
+            overflow: hidden;
+        }
+
+        .law {
+            display: flex;
+            width: 100%;
+            height: 100%;
+        }
+
+        .leftDiv {
+            height: 100%;
+            background: linear-gradient(180deg, #e8f4fc 0%, #f5fafd 100%);
+            border-right: 1px solid #d0e3f0;
+            display: flex;
+            flex-direction: column;
+            min-width: 280px;
+            max-width: 50%;
+            max-width: 50%;
+            position: relative;
+            transition: width 0.2s ease, min-width 0.2s ease;
+            overflow: hidden;
+        }
+
+        .head {
+            display: flex;
+            align-items: center;
+            height: 44px;
+            background: linear-gradient(180deg, #4a9eda 0%, #3a8bc8 100%);
+            padding: 0 12px;
+            color: white;
+            gap: 4px;
+        }
+
+        .head span {
+            flex: 0 0 auto;
+            font-size: 14px;
+            font-weight: 500;
+            white-space: nowrap;
+            margin-left: 8px;
+        }
+
+        .head .filler {
+            flex: 1;
+        }
+
+        .headBtns {
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .headBtns img {
+            cursor: pointer;
+            width: 24px;
+            height: 24px;
+            opacity: 0.9;
+            transition: opacity 0.2s;
+        }
+
+        .headBtns img:hover {
+            opacity: 1;
+        }
+
+        .topBox {
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            gap: 8px;
+            background: #fff;
+            border-bottom: 1px solid #e5e5e5;
+        }
+
+        .searchBox {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            background: #f5f7fa;
+            border: 1px solid #dcdfe6;
+            border-radius: 6px;
+            padding: 0 10px;
+            height: 34px;
+        }
+
+        .searchBox input {
+            flex: 1;
+            border: none;
+            background: transparent;
+            outline: none;
+            font-size: 13px;
+            font-size: 13px;
+            color: #333;
+            font-family: 'Times New Roman', SimSun, serif;
+        }
+
+        .searchBox input::placeholder {
+            color: #999;
+        }
+
+        .searchBox img {
+            width: 18px;
+            height: 18px;
+            opacity: 0.5;
+        }
+
+        .navBtns {
+            display: flex;
+            gap: 4px;
+        }
+
+        .navBtns img {
+            cursor: pointer;
+            width: 28px;
+            height: 28px;
+            padding: 4px;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+
+        .navBtns img:hover {
+            background: #e8f0f8;
+        }
+
+        #treeView {
+            flex: 1;
+            overflow: auto;
+            padding: 0 8px 8px 8px;
+        }
+
+        #treeView::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        #treeView::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
+
+        #treeView::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 4px;
+        }
+
+        #treeView::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
+
+        .resizeLine {
+            position: absolute;
+            right: 0;
+            top: 0;
+            width: 6px;
+            height: 100%;
+            cursor: col-resize;
+            z-index: 100;
+        }
+
+        .resizeLine:hover {
+            background: rgba(74, 158, 218, 0.3);
+        }
+
+        .cont {
+            flex: 1;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            background: #fff;
+        }
+
+        #tabs {
+            flex: 1;
+            overflow: auto;
+            padding: 30px 50px;
+            line-height: 1.8;
+            font-size: 15px;
+            color: #333;
+        }
+
+        #tabs::-webkit-scrollbar {
+            width: 10px;
+        }
+
+        #tabs::-webkit-scrollbar-track {
+            background: #f5f5f5;
+        }
+
+        #tabs::-webkit-scrollbar-thumb {
+            background: #d0d0d0;
+            border-radius: 5px;
+        }
+
+        #tabs::-webkit-scrollbar-thumb:hover {
+            background: #b0b0b0;
+        }
+
+        .default-content {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            font-size: 28px;
+            color: #666;
+            font-weight: 500;
+        }
+
+        /* 法条样式 */
+        .law-title {
+            text-align: center;
+            font-size: 22px;
+            font-weight: bold;
+            margin-bottom: 30px;
+            color: #333;
+        }
+
+        .law-subtitle {
+            text-align: center;
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 20px;
+        }
+
+        .law-chapter {
+            font-size: 17px;
+            font-weight: bold;
+            margin: 25px 0 15px;
+            color: #1a5d8a;
+        }
+
+        .law-article {
+            margin: 6px 0;
+            line-height: 1.6;
+        }
+
+        .law-article-title {
+            margin-top: 30px !important;
+        }
+
+        .law-article b {
+            color: #1a5d8a;
+        }
+
+        .law-item {
+            margin: 2px 0;
+            text-indent: 0;
+            line-height: 1.6;
+        }
+
+        .law-section {
+            margin-bottom: 30px;
+        }
+
+        /* zTree 样式覆盖 */
+        .ztree,
+        .ztree * {
+            font-size: 14px !important;
+            font-family: 'Times New Roman', SimSun, serif !important;
+        }
+
+        .ztree {
+            margin: 0;
+            padding: 0;
+        }
+
+        .ztree ul {
+            margin: 0;
+            padding: 0 0 0 18px;
+        }
+
+        .ztree li {
+            line-height: 22px;
+        }
+
+        .ztree li span {
+            line-height: 22px;
+        }
+
+        .ztree li a {
+            padding: 3px 5px;
+            border-radius: 3px;
+        }
+
+
+
+
+
+        /* 高亮搜索结果 */
+        .highlight {
+            background: #fff3cd !important;
+        }
+
+        /* 版本切换按钮 */
+        .version-switch {
+            display: flex;
+            align-items: center;
+            margin-right: 4px;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .version-btn {
+            padding: 4px 6px;
+            font-size: 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            color: white;
+            white-space: nowrap;
+        }
+
+        .version-btn.active {
+            background: rgba(255, 255, 255, 0.3);
+            font-weight: bold;
+        }
+
+        .version-btn:not(.active) {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .version-btn:hover:not(.active) {
+            background: rgba(255, 255, 255, 0.2);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="law">
+        <div class="leftDiv" id="leftDiv" style="width: 320px;">
+            <div class="head">
+                <div class="version-switch">
+                    <a href="index.html" class="version-btn active">基础版</a>
+                    <a href="annotation.html" class="version-btn">标注版</a>
+                </div>
+                <span>章节导航</span>
+                <div class="filler"></div>
+                <div class="headBtns">
+                    <img src="img/left.png" onclick="toggleSidebar()" title="收起/展开" id="sidebarToggleBtn">
+                </div>
+            </div>
+            <div class="topBox">
+                <div class="searchBox">
+                    <input type="text" id="searchInput" placeholder="搜索法条..." onkeyup="searchTree()">
+                    <img src="img/search.png">
+                </div>
+                <div class="navBtns">
+                    <img src="img/prev.png" onclick="gotoPrev()" title="上一个">
+                    <img src="img/next.png" onclick="gotoNext()" title="下一个">
+                </div>
+            </div>
+            <div id="treeView">
+                <ul id="treeDemo" class="ztree"></ul>
+            </div>
+            <div class="resizeLine" onmousedown="startResize(event)"></div>
+        </div>
+        <div class="cont">
+            <div class="head" style="justify-content: center; border-left: 1px solid rgba(255,255,255,0.2);">
+                <span id="contentTitle" style="text-align: center; font-size: 16px; font-weight: bold;">法律法规汇编</span>
+            </div>
+            <div id="tabs">
+                <div class="default-content">法律法规汇编</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/jquery.min.js"></script>
+    <script src="js/jquery.ztree.all.js"></script>
+    <script src="js/jquery.ztree.core.js"></script>
+    <script src="js/jquery.ztree.exhide.js"></script>
+    <script src="js/tree_data.js?v=14"></script>
+    <script>
+        // 全局变量
+        var treeObj = null;
+        var currentNodeId = null;
+        var searchNodes = [];
+        var searchIndex = 0;
+        var lawContentCache = {};  // 缓存已加载的法条内容
+
+        // zTree 配置
+        var setting = {
+            view: {
+                showLine: true,
+                showIcon: true,
+                fontCss: getFontCss
+            },
+            data: {
+                key: {
+                    name: "content"
+                },
+                simpleData: {
+                    enable: false
+                }
+            },
+            callback: {
+                onClick: onNodeClick,
+                onExpand: onNodeExpand
+            }
+        };
+
+        // 获取节点样式
+        function getFontCss(treeId, treeNode) {
+            return treeNode.highlight
+                ? { color: "#e67e22", "font-weight": "bold" }
+                : {};
+        }
+
+        // 处理点击节点
+        function onNodeClick(event, treeId, treeNode) {
+            // 原逻辑：如果有子节点则展开/折叠
+            // 新逻辑：单击跳转（加载内容），双击展开（zTree默认）
+            currentNodeId = treeNode.id;
+            loadNodeContent(treeNode);
+        }
+
+        // 加载节点内容
+        function loadNodeContent(treeNode) {
+            // 如果有子节点，自动跳转到第一个子节点（递归下钻）
+            if (treeNode.children && treeNode.children.length > 0) {
+                var firstChild = treeNode.children[0];
+                // 展开当前节点
+                treeObj.expandNode(treeNode, true, false, true);
+                // 选中第一个子节点
+                treeObj.selectNode(firstChild);
+                // 加载第一个子节点的内容
+                loadNodeContent(firstChild);
+                return;
+            }
+
+            var targetId = treeNode.id;
+
+            // 向上查找包含法条内容的父节点（type=2的节点代表具体法律）
+            var node = treeNode;
+            var lawId = null;
+            var lawTitle = null;
+
+            while (node) {
+                // type=2 表示具体的法律文件
+                if (node.type === '2' || node.type === 2) {
+                    lawId = node.id;
+                    lawTitle = node.content;
+                    break;
+                }
+                // 如果有jsonUrl，也可以使用
+                if (node.jsonUrl) {
+                    lawId = node.id;
+                    lawTitle = node.content;
+                    break;
+                }
+                node = node.getParentNode();
+            }
+
+            if (!lawId) {
+                // 如果没有找到，使用当前节点ID尝试
+                lawId = treeNode.id;
+            }
+
+            if (!lawTitle) {
+                lawTitle = treeNode.content;
+            }
+
+            if (lawTitle) {
+                $("#contentTitle").text(lawTitle.replace(/（大纲没有）/g, '(大纲没有)'));
+            }
+
+            var localUrl = 'data/laws/' + lawId + '.json';
+
+            // 检查缓存
+            if (lawContentCache[localUrl]) {
+                displayContent(lawContentCache[localUrl], targetId);
+                return;
+            }
+
+            // 加载本地JSON文件（禁用缓存）
+            $.ajax({
+                url: localUrl + '?_=' + new Date().getTime(),
+                dataType: 'json',
+                cache: false,
+                success: function (data) {
+                    lawContentCache[localUrl] = data;
+                    displayContent(data, targetId);
+                },
+                error: function () {
+                    // 尝试其他格式的文件名
+                    tryAlternativeLoad(treeNode, targetId);
+                }
+            });
+        }
+
+        // 尝试其他加载方式
+        function tryAlternativeLoad(treeNode, targetId) {
+            // 向上查找有jsonUrl的节点
+            var node = treeNode;
+            while (node) {
+                if (node.jsonUrl) {
+                    var filename = node.jsonUrl.split('/').pop();
+                    var localUrl = 'data/laws/' + filename;
+
+                    if (lawContentCache[localUrl]) {
+                        displayContent(lawContentCache[localUrl], targetId);
+                        return;
+                    }
+
+                    $.ajax({
+                        url: localUrl + '?_=' + new Date().getTime(),
+                        dataType: 'json',
+                        cache: false,
+                        success: function (data) {
+                            lawContentCache[localUrl] = data;
+                            displayContent(data, targetId);
+                        },
+                        error: function () {
+                            $("#tabs").html('<div class="default-content">暂无内容</div>');
+                        }
+                    });
+                    return;
+                }
+                node = node.getParentNode();
+            }
+            $("#tabs").html('<div class="default-content">暂无内容</div>');
+        }
+
+        // 显示内容
+        function displayContent(data, targetId) {
+            var html = '';
+
+            // 新格式: {id, name, content: [{lawWebContent, id, ...}, ...]}
+            if (data && data.content && Array.isArray(data.content)) {
+                for (var i = 0; i < data.content.length; i++) {
+                    var item = data.content[i];
+                    html += '<div id="article_' + item.id + '" class="law-section">';
+                    if (item.lawWebContent) {
+                        html += formatLawContent(item.lawWebContent, item.content || '');
+                    }
+                    html += '</div>';
+                }
+            }
+            // 新格式: {id, name, content: "string"}
+            else if (data && data.content && typeof data.content === 'string') {
+                html = formatLawContent(data.content, data.name || '');
+            }
+            // 旧格式: JSON数组，每个元素有 lawWebContent 字段
+            else if (Array.isArray(data)) {
+                for (var i = 0; i < data.length; i++) {
+                    if (data[i].lawWebContent) {
+                        html += '<div id="article_' + data[i].id + '" class="law-section">';
+                        html += formatLawContent(data[i].lawWebContent, data[i].content);
+                        html += '</div>';
+                    }
+                }
+            } else if (data && data.data && Array.isArray(data.data)) {
+                html = buildContentHtml(data.data, targetId);
+            } else if (typeof data === 'string') {
+                html = formatLawContent(data, '');
+            } else {
+                html = '<div class="default-content">暂无内容</div>';
+            }
+
+            if (!html) {
+                html = '<div class="default-content">暂无内容</div>';
+            }
+
+            $("#tabs").html(html);
+
+            // 滚动到目标位置
+            var targetElement = document.getElementById('article_' + targetId);
+            if (targetElement) {
+                setTimeout(function () {
+                    targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }, 100);
+            }
+        }
+
+        // 格式化法律内容
+        function formatLawContent(content, title) {
+            if (!content) return '';
+
+            var html = '';
+
+            // 分割段落
+            var paragraphs = content.split('\n');
+
+            for (var i = 0; i < paragraphs.length; i++) {
+                var para = paragraphs[i].trim();
+                if (!para) continue;
+
+                // 判断段落类型
+                if (title === '标题') {
+                    // 标题/说明文字，按普通段落处理
+                    html += '<div class="law-article">' + para + '</div>';
+                } else if (/^第[一二三四五六七八九十百千]+编/.test(para) ||
+                    /^第[一二三四五六七八九十百千]+章/.test(para) ||
+                    /^第[一二三四五六七八九十百千]+节/.test(para)) {
+                    // 编/章/节标题
+                    html += '<div class="law-chapter">' + para + '</div>';
+                } else if (/^第[一二三四五六七八九十百千万零○〇]+条/.test(para)) {
+                    // 条款
+                    html += '<div class="law-article law-article-title"><b>' + para.replace(/^(第[一二三四五六七八九十百千万零○〇]+条之?[一二三四五六七八九十]?)/, '$1</b>') + '</div>';
+                } else if (/^（[一二三四五六七八九十]+）/.test(para) || /^[\(（]\d+[\)）]/.test(para)) {
+                    // 项目编号
+                    html += '<div class="law-item">' + para + '</div>';
+                } else if (para === title || i === 0 && para.length < 50 && !para.includes('。')) {
+                    // 标题
+                    html += '<div class="law-title">' + para + '</div>';
+                } else {
+                    // 普通段落
+                    html += '<div class="law-article">' + para + '</div>';
+                }
+            }
+
+            return html;
+        }
+
+        // 构建内容HTML（备用方法）
+        function buildContentHtml(items, targetId) {
+            var html = '';
+
+            for (var i = 0; i < items.length; i++) {
+                var item = items[i];
+                var content = item.content || '';
+                var id = item.id;
+
+                // 根据type决定样式
+                if (item.type === 1) {
+                    html += '<div class="law-title" id="article_' + id + '">' + content + '</div>';
+                } else if (item.type === 2 || item.type === 3) {
+                    html += '<div class="law-chapter" id="article_' + id + '">' + content + '</div>';
+                } else if (item.type === 4 || item.type === 5) {
+                    html += '<div class="law-article" id="article_' + id + '">' + formatArticleContent(content) + '</div>';
+                } else {
+                    html += '<div class="law-article" id="article_' + id + '">' + formatArticleContent(content) + '</div>';
+                }
+
+                if (item.children && item.children.length > 0) {
+                    html += buildContentHtml(item.children, targetId);
+                }
+            }
+
+            return html;
+        }
+
+        // 格式化条款内容
+        function formatArticleContent(content) {
+            if (!content) return '';
+
+            // 处理条款编号
+            content = content.replace(/^(第[一二三四五六七八九十百千]+条)/g, '<b>$1</b>');
+            content = content.replace(/\n(第[一二三四五六七八九十百千]+条)/g, '</div><div class="law-article"><b>$1</b>');
+
+            // 处理换行
+            content = content.replace(/\n/g, '<br>');
+
+            return content;
+        }
+
+        // 节点展开
+        function onNodeExpand(event, treeId, treeNode) {
+            // 可扩展：动态加载子节点
+        }
+
+        // 搜索功能
+        function searchTree() {
+            var keyword = $("#searchInput").val().trim();
+
+            // 清除之前的高亮
+            var allNodes = treeObj.getNodesByFilter(function (node) {
+                return node.highlight;
+            });
+            for (var i = 0; i < allNodes.length; i++) {
+                allNodes[i].highlight = false;
+                treeObj.updateNode(allNodes[i]);
+            }
+
+            searchNodes = [];
+            searchIndex = 0;
+
+            if (!keyword) return;
+
+            // 查找匹配节点
+            searchNodes = treeObj.getNodesByParamFuzzy("content", keyword);
+
+            // 高亮匹配节点
+            for (var i = 0; i < searchNodes.length; i++) {
+                searchNodes[i].highlight = true;
+                treeObj.updateNode(searchNodes[i]);
+
+                // 展开父节点
+                var parent = searchNodes[i].getParentNode();
+                while (parent) {
+                    treeObj.expandNode(parent, true, false, false);
+                    parent = parent.getParentNode();
+                }
+            }
+
+            // 定位到第一个匹配
+            if (searchNodes.length > 0) {
+                treeObj.selectNode(searchNodes[0]);
+            }
+        }
+
+        // 上一个搜索结果
+        function gotoPrev() {
+            if (searchNodes.length === 0) return;
+            searchIndex = (searchIndex - 1 + searchNodes.length) % searchNodes.length;
+            treeObj.selectNode(searchNodes[searchIndex]);
+        }
+
+        // 下一个搜索结果
+        function gotoNext() {
+            if (searchNodes.length === 0) return;
+            searchIndex = (searchIndex + 1) % searchNodes.length;
+            treeObj.selectNode(searchNodes[searchIndex]);
+        }
+
+        // 切换侧边栏
+        var sidebarVisible = true;
+        function toggleSidebar() {
+            var leftDiv = $("#leftDiv");
+            var headSpan = leftDiv.find(".head span");
+            var topBox = leftDiv.find(".topBox");
+            var treeView = $("#treeView");
+            var resizeLine = leftDiv.find(".resizeLine");
+            var toggleBtn = $("#sidebarToggleBtn");
+            var versionSwitch = leftDiv.find(".version-switch");
+
+            if (sidebarVisible) {
+                // 收起
+                leftDiv.css("width", "48px");
+                leftDiv.css("min-width", "48px");
+
+                headSpan.hide();
+                topBox.hide();
+                treeView.hide();
+                resizeLine.hide();
+                versionSwitch.hide();
+
+                // 按钮旋转180度
+                toggleBtn.css("transform", "rotate(180deg)");
+                toggleBtn.attr("title", "展开");
+            } else {
+                // 展开
+                leftDiv.css("width", "320px");
+                leftDiv.css("min-width", "280px");
+
+                headSpan.show();
+                topBox.show();
+                treeView.show();
+                resizeLine.show();
+                versionSwitch.show();
+
+                // 按钮恢复
+                toggleBtn.css("transform", "rotate(0deg)");
+                toggleBtn.attr("title", "收起");
+            }
+            sidebarVisible = !sidebarVisible;
+        }
+
+        // 拖拽调整宽度
+        var isResizing = false;
+        function startResize(e) {
+            isResizing = true;
+            document.addEventListener('mousemove', doResize);
+            document.addEventListener('mouseup', stopResize);
+            e.preventDefault();
+        }
+
+        function doResize(e) {
+            if (!isResizing) return;
+            var newWidth = e.clientX;
+            if (newWidth >= 200 && newWidth <= window.innerWidth * 0.6) {
+                $("#leftDiv").css("width", newWidth + "px");
+            }
+        }
+
+        function stopResize() {
+            isResizing = false;
+            document.removeEventListener('mousemove', doResize);
+            document.removeEventListener('mouseup', stopResize);
+        }
+
+        // 转换树数据
+        function convertTreeData(data) {
+            if (!data) return [];
+            var result = [];
+
+            for (var i = 0; i < data.length; i++) {
+                var item = data[i];
+                var node = {
+                    id: item.id,
+                    content: item.content,
+                    type: item.type,
+                    jsonUrl: item.jsonUrl,
+                    open: false,
+                    isParent: item.children && item.children.length > 0
+                };
+
+                if (item.children && item.children.length > 0) {
+                    node.children = convertTreeData(item.children);
+                }
+
+                result.push(node);
+            }
+
+            return result;
+        }
+
+        // 初始化
+        $(document).ready(function () {
+            // 清除缓存，确保加载最新内容
+            lawContentCache = {};
+
+            if (typeof zTreeJson !== 'undefined' && zTreeJson.data) {
+                var treeData = convertTreeData(zTreeJson.data);
+                treeObj = $.fn.zTree.init($("#treeDemo"), setting, treeData);
+            } else {
+                console.error("无法加载树数据");
+            }
+        });
+    </script>
+</body>
+
+</html>
