@@ -12,8 +12,9 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__)
 CORS(app)
 
-DB_FILE = 'users.json'
-CODES_FILE = 'codes.json'
+# Vercel Serverless 环境中，只有 /tmp/ 目录有写权限
+DB_FILE = '/tmp/users.json'
+CODES_FILE = '/tmp/codes.json'
 
 # ============================================================
 # 核心密钥 —— 请勿泄露！
