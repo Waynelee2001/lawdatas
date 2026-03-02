@@ -4950,10 +4950,10 @@
 
         // ================= 登录/注册 前端交互逻辑 =================
         var currentUser = null;
-        // 互联网部署时，请将此地址修改为你的后端 API 地址（例如：https://your-api.zeabur.app）
-        var BASE_URL = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost'
-            ? 'http://127.0.0.1:5100'
-            : 'https://法考后端-你的域名.zeabur.app';
+        // 互联网部署时，使用 Vercel 提供的后端 API 地址
+        var BASE_URL = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost' 
+            ? 'http://127.0.0.1:5100' 
+            : 'https://lawdatas.vercel.app'; 
 
         $(document).ready(function () {
             updateLoginStatus();
