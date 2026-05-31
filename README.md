@@ -107,7 +107,7 @@ python3 keygen_tool.py -n 50 -o codes.txt
 校验兑换码：
 
 ```bash
-python3 keygen_tool.py --verify ABCDE-FGHIJ
+python3 keygen_tool.py --verify ABCDE-FGHJK
 ```
 
 ## 部署
