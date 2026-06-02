@@ -9,6 +9,10 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT_DIR / ".env")
 
 
+def _env_str(name: str, default: str = "") -> str:
+    return os.getenv(name, default).strip()
+
+
 class Settings:
     """
     Runtime configuration, loaded once from environment variables.
@@ -37,21 +41,21 @@ class Settings:
         self.annotations_dir = ROOT_DIR / "data" / "annotations"
         self.backlinks_path = ROOT_DIR / "js" / "backlinks.js"
         self.law_map_path = ROOT_DIR / "all_laws_map.json"
-        self.storage_dir = ROOT_DIR / os.getenv("INDEX_STORAGE_DIR", "rag/storage")
+        self.storage_dir = ROOT_DIR / _env_str("INDEX_STORAGE_DIR", "rag/storage")
 
         # SiliconFlow — embeddings + reranking
-        self.siliconflow_api_key: str = os.getenv("SILICONFLOW_API_KEY", "")
-        self.siliconflow_base_url: str = os.getenv(
+        self.siliconflow_api_key: str = _env_str("SILICONFLOW_API_KEY")
+        self.siliconflow_base_url: str = _env_str(
             "SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"
         )
-        self.siliconflow_embedding_model: str = os.getenv(
+        self.siliconflow_embedding_model: str = _env_str(
             "SILICONFLOW_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-4B"
         )
-        self.siliconflow_rerank_model: str = os.getenv(
+        self.siliconflow_rerank_model: str = _env_str(
             "SILICONFLOW_RERANK_MODEL", "Qwen/Qwen3-Reranker-0.6B"
         )
         # Fallback chat model on SiliconFlow (used only when DeepSeek is not configured)
-        self.siliconflow_chat_model: str = os.getenv(
+        self.siliconflow_chat_model: str = _env_str(
             "SILICONFLOW_CHAT_MODEL", "Qwen/Qwen2.5-7B-Instruct"
         )
         self.siliconflow_enable_rerank: bool = (
@@ -68,28 +72,28 @@ class Settings:
         )
 
         # DeepSeek — preferred provider for LLM tasks
-        self.deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
-        self.deepseek_base_url: str = os.getenv(
+        self.deepseek_api_key: str = _env_str("DEEPSEEK_API_KEY")
+        self.deepseek_base_url: str = _env_str(
             "DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"
         )
-        self.deepseek_chat_model: str = os.getenv(
+        self.deepseek_chat_model: str = _env_str(
             "DEEPSEEK_CHAT_MODEL", "deepseek-chat"
         )
-        self.deepseek_query_analysis_model: str = os.getenv(
+        self.deepseek_query_analysis_model: str = _env_str(
             "DEEPSEEK_QUERY_ANALYSIS_MODEL",
-            os.getenv("DEEPSEEK_CHAT_MODEL", "deepseek-chat"),
+            _env_str("DEEPSEEK_CHAT_MODEL", "deepseek-chat"),
         )
 
         # Qdrant
         self.index_persist_every_batches: int = int(
             os.getenv("INDEX_PERSIST_EVERY_BATCHES", "4")
         )
-        self.qdrant_url: str = os.getenv("QDRANT_URL", "")
-        self.qdrant_api_key: str = os.getenv("QDRANT_API_KEY", "")
-        self.qdrant_collection: str = os.getenv(
+        self.qdrant_url: str = _env_str("QDRANT_URL")
+        self.qdrant_api_key: str = _env_str("QDRANT_API_KEY")
+        self.qdrant_collection: str = _env_str(
             "QDRANT_COLLECTION", "law_articles_qwen4b"
         )
-        self.qdrant_local_path: Path = ROOT_DIR / os.getenv(
+        self.qdrant_local_path: Path = ROOT_DIR / _env_str(
             "QDRANT_LOCAL_PATH", "rag/storage/qdrant_local"
         )
 
