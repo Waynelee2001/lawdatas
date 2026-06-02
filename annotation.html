@@ -365,9 +365,16 @@
         }
 
         /* 右侧正文搜索栏 */
+        .cont>.head {
+            justify-content: flex-start !important;
+            gap: 10px;
+            padding: 0 10px;
+            overflow: hidden;
+        }
+
         .content-search-box {
-            position: absolute;
-            right: 15px;
+            position: static;
+            flex: 0 1 clamp(180px, 34%, 360px);
             display: flex;
             align-items: center;
             background: #fff;
@@ -377,18 +384,49 @@
             height: 34px;
             box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
             z-index: 10;
-            width: fit-content;
-            min-width: 200px;
+            width: auto;
+            min-width: 0;
         }
 
         .content-search-box input {
             flex: 1;
-            min-width: 120px;
+            min-width: 0;
             background: transparent;
             border: none;
             color: #333;
             outline: none;
             font-size: 14px;
+        }
+
+        #contentTitle {
+            display: block;
+            flex: 1 1 auto;
+            min-width: 0;
+            max-width: none;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        @media (max-width: 1180px) {
+            .content-search-box {
+                flex-basis: clamp(140px, 38%, 280px);
+                padding: 0 8px;
+            }
+
+            #contentTitle {
+                max-width: none;
+            }
+        }
+
+        @media (max-width: 760px) {
+            .content-search-box {
+                flex-basis: 132px;
+            }
+
+            #contentTitle {
+                max-width: none;
+            }
         }
 
         .dark-mode .content-search-box {
@@ -1266,6 +1304,34 @@
         .login-banner:hover,
         .feedback-banner:hover {
             background: linear-gradient(180deg, #b8956a 0%, #a38158 100%);
+        }
+
+        .leftDiv.collapsed .bottom-banner-container {
+            margin-top: auto;
+            height: 48px;
+            border-top: 1px solid #d4c4b0;
+        }
+
+        .leftDiv.collapsed .login-banner {
+            display: none;
+        }
+
+        .leftDiv.collapsed .feedback-banner {
+            width: 100%;
+            height: 48px;
+            padding: 0;
+            border-left: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0;
+            letter-spacing: 0;
+        }
+
+        .leftDiv.collapsed .feedback-banner::before {
+            content: "💬";
+            font-size: 18px;
+            line-height: 1;
         }
 
         /* 账号管理菜单按钮样式 */
@@ -4337,6 +4403,12 @@
 
                 var lawId = $(this).data('law-id');
                 var article = $(this).data('article');
+                var inlineNav = $(this).hasClass('ai-law-ref') || $(this).closest('#aiSidebar').length > 0;
+
+                if (inlineNav && typeof window.navigateToLawArticle === 'function') {
+                    window.navigateToLawArticle(lawId, article);
+                    return;
+                }
 
                 // 新标签页打开（不传尺寸参数，确保是标签页而非弹窗）
                 var url = 'annotation.html?law=' + lawId + '&article=' + encodeURIComponent(article);
@@ -4682,36 +4754,24 @@
             return null;
         }
 
-        // 处理URL参数跳转
-        function handleUrlParams() {
-            var urlParams = new URLSearchParams(window.location.search);
-            var lawId = urlParams.get('law');
-            var article = urlParams.get('article');
-
-            console.log('[法条跳转] 检查URL参数: law=' + lawId + ', article=' + article);
-
+        function navigateToLawArticle(lawId, article) {
             if (!lawId) {
-                console.log('[法条跳转] 没有law参数，跳过');
                 return;
             }
 
             if (!treeObj) {
-                console.log('[法条跳转] treeObj未初始化，延迟重试');
-                setTimeout(handleUrlParams, 500);
+                setTimeout(function () {
+                    navigateToLawArticle(lawId, article);
+                }, 500);
                 return;
             }
 
             // 在左侧树中定位到该法律
-            // 注意：getNodesByFilter 第二个参数为 true 时返回单个节点对象，非数组
             var node = treeObj.getNodesByFilter(function (n) {
                 return String(n.id) === String(lawId);
             }, true);
 
-            console.log('[法条跳转] 找到节点:', node ? (node.content || node.name) : '未找到');
-
             if (node) {
-                console.log('[法条跳转] 目标节点:', node.content || node.name, 'type:', node.type);
-
                 // 展开父节点
                 var parent = node.getParentNode();
                 while (parent) {
@@ -4730,6 +4790,14 @@
                 }
                 currentLawId = targetLawId;
                 var localUrl = DATA_PATH + targetLawId + '.json';
+                var url = new URL(window.location.href);
+                url.searchParams.set('law', targetLawId);
+                if (article) {
+                    url.searchParams.set('article', article);
+                } else {
+                    url.searchParams.delete('article');
+                }
+                history.replaceState({}, '', url.toString());
 
                 loadAnnotation(targetLawId, function () {
                     $.ajax({
@@ -4748,14 +4816,29 @@
                             }
                         },
                         error: function () {
-                            console.log('[法条跳转] 加载法律数据失败:', localUrl);
                             $('#tabs').html('<div class="default-content">暂无内容</div>');
                         }
                     });
                 });
-            } else {
-                console.log('[法条跳转] 未找到ID为', lawId, '的节点');
             }
+        }
+
+        window.navigateToLawArticle = navigateToLawArticle;
+
+        // 处理URL参数跳转
+        function handleUrlParams() {
+            var urlParams = new URLSearchParams(window.location.search);
+            var lawId = urlParams.get('law');
+            var article = urlParams.get('article');
+
+            console.log('[法条跳转] 检查URL参数: law=' + lawId + ', article=' + article);
+
+            if (!lawId) {
+                console.log('[法条跳转] 没有law参数，跳过');
+                return;
+            }
+
+            navigateToLawArticle(lawId, article);
         }
 
         // 滚动到指定法条
@@ -4950,16 +5033,25 @@
 
         // ================= 登录/注册 前端交互逻辑 =================
         var currentUser = null;
-        // 互联网部署时，使用 Vercel 提供的后端 API 地址
-        var BASE_URL = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost' 
-            ? 'http://127.0.0.1:5100' 
-            : 'https://lawdatas.vercel.app'; 
+        var DEV_BYPASS_AUTH = true;
+        var BASE_URL = (
+            window.APP_BACKEND_BASE_URL ||
+            window.BASE_URL ||
+            (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost'
+                ? 'http://127.0.0.1:5100'
+                : window.location.origin)
+        ).replace(/\/$/, '');
+        window.BASE_URL = BASE_URL;
+        var LOCAL_BACKEND_HINT = BASE_URL.replace(/^https?:\/\//, '');
 
         $(document).ready(function () {
             updateLoginStatus();
         });
 
         function showAuthModal() {
+            if (DEV_BYPASS_AUTH && !currentUser) {
+                return;
+            }
             if (currentUser) {
                 $('#accountUsernameDisplay').text(currentUser);
                 $('#accountOverlay').css('display', 'flex');
@@ -4972,11 +5064,6 @@
             if (e) {
                 e.preventDefault();
                 e.stopPropagation();
-            }
-            if (!currentUser) {
-                // 如果是强制登录状态，不允许关闭弹窗，给出内联红字提示并提供返回基础版链接
-                $('#authMsg').html('使用此版本需登录，请先登录或 <a href="index.html" style="color: #3498db; text-decoration: underline;">返回基础版</a>').css('color', '#e74c3c');
-                return;
             }
             $('#authOverlay').css('display', 'none');
             $('#authMsg').text('').css('color', '#e74c3c');
@@ -5116,12 +5203,20 @@
             if (savedUser) {
                 currentUser = savedUser;
                 $('#navLoginBtn').text('👤 账号管理');
+                $('#navLoginBtn').show();
                 refreshActivationBadge(activated);
             } else {
                 currentUser = null;
-                $('#navLoginBtn').text('👤 登录');
-                // 强制要求登录
-                showAuthModal();
+                if (DEV_BYPASS_AUTH) {
+                    $('#navLoginBtn').hide();
+                    $('#authOverlay').hide();
+                    refreshActivationBadge(false);
+                } else {
+                    $('#navLoginBtn').text('👤 登录');
+                    $('#navLoginBtn').show();
+                    // 强制要求登录
+                    showAuthModal();
+                }
             }
         }
 
@@ -5187,7 +5282,7 @@
                     }
                 },
                 error: function () {
-                    $('#authMsg').text('✖ 连接服务器失败，请确保本地后台已启动 (端口:5000)').css('color', '#e74c3c');
+                    $('#authMsg').text('✖ 连接服务器失败，请确保本地后台已启动 (' + LOCAL_BACKEND_HINT + ')').css('color', '#e74c3c');
                 }
             });
         }
@@ -5232,11 +5327,12 @@
                     }
                 },
                 error: function () {
-                    $('#authMsg').text('✖ 连接服务器失败，请确保本地后台已启动 (端口:5000)').css('color', '#e74c3c');
+                    $('#authMsg').text('✖ 连接服务器失败，请确保本地后台已启动 (' + LOCAL_BACKEND_HINT + ')').css('color', '#e74c3c');
                 }
             });
         }
     </script>
+    <script src="js/ai_sidebar.js?v=1"></script>
 </body>
 
 </html>

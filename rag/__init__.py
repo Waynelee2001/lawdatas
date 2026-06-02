@@ -1,0 +1,1 @@
+"""Legal RAG project skeleton."""
