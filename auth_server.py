@@ -288,6 +288,43 @@ def rag_health():
         return jsonify({"code": 500, "msg": f"RAG 配置检查失败: {exc}"}), 500
 
 
+def _env_fingerprint(name: str) -> dict:
+    value = os.getenv(name, "")
+    stripped = value.strip()
+    return {
+        "configured": bool(stripped),
+        "length": len(stripped),
+        "raw_length": len(value),
+        "sha256_12": hashlib.sha256(stripped.encode()).hexdigest()[:12]
+        if stripped
+        else "",
+        "starts_with_sk": stripped.startswith("sk-"),
+        "contains_equals": "=" in stripped,
+        "has_outer_whitespace": value != stripped,
+    }
+
+
+@app.route("/api/rag/env-fingerprint", methods=["GET"])
+def rag_env_fingerprint():
+    return jsonify(
+        {
+            "code": 200,
+            "msg": "ok",
+            "data": {
+                "siliconflow_api_key": _env_fingerprint("SILICONFLOW_API_KEY"),
+                "deepseek_api_key": _env_fingerprint("DEEPSEEK_API_KEY"),
+                "siliconflow_embedding_model": os.getenv(
+                    "SILICONFLOW_EMBEDDING_MODEL", ""
+                ),
+                "deepseek_chat_model": os.getenv("DEEPSEEK_CHAT_MODEL", ""),
+                "deepseek_query_analysis_model": os.getenv(
+                    "DEEPSEEK_QUERY_ANALYSIS_MODEL", ""
+                ),
+            },
+        }
+    )
+
+
 @app.route("/api/rag/query", methods=["POST"])
 def rag_query():
     data = request.json or {}
