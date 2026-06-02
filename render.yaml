@@ -1,0 +1,49 @@
+services:
+  - type: web
+    runtime: docker
+    name: law-rag-api
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: 5100
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: LAW_ACTIVATION_SECRET_KEY
+        sync: false
+      - key: USERS_DB_FILE
+        value: /tmp/users.json
+      - key: CODES_DB_FILE
+        value: /tmp/codes.json
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: QDRANT_COLLECTION
+        value: law_articles_qwen4b_full
+      - key: SILICONFLOW_API_KEY
+        sync: false
+      - key: SILICONFLOW_BASE_URL
+        value: https://api.siliconflow.cn/v1
+      - key: SILICONFLOW_EMBEDDING_MODEL
+        value: Qwen/Qwen3-Embedding-4B
+      - key: SILICONFLOW_RERANK_MODEL
+        value: Qwen/Qwen3-Reranker-0.6B
+      - key: SILICONFLOW_ENABLE_RERANK
+        value: "1"
+      - key: SILICONFLOW_EMBED_BATCH_SIZE
+        value: "64"
+      - key: SILICONFLOW_REQUEST_BATCH_SIZE
+        value: "16"
+      - key: SILICONFLOW_MAX_PARALLEL_REQUESTS
+        value: "4"
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DEEPSEEK_BASE_URL
+        value: https://api.deepseek.com/v1
+      - key: DEEPSEEK_CHAT_MODEL
+        value: deepseek-chat
+      - key: DEEPSEEK_QUERY_ANALYSIS_MODEL
+        value: deepseek-chat

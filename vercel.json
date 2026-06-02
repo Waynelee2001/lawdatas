@@ -16,6 +16,14 @@
             "dest": "auth_server.py"
         },
         {
+            "src": "/api/health",
+            "dest": "auth_server.py"
+        },
+        {
+            "src": "/api/(rag|agent)/(.*)",
+            "dest": "auth_server.py"
+        },
+        {
             "handle": "filesystem"
         },
         {
