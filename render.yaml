@@ -44,6 +44,6 @@ services:
       - key: DEEPSEEK_BASE_URL
         value: https://api.deepseek.com/v1
       - key: DEEPSEEK_CHAT_MODEL
-        value: deepseek-chat
+        value: deepseek-v4-flash
       - key: DEEPSEEK_QUERY_ANALYSIS_MODEL
-        value: deepseek-chat
+        value: deepseek-v4-flash
