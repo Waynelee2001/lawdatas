@@ -34,10 +34,10 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-MAX_ROUNDS = 5  # hard cap on tool-call rounds
-MAX_TOOL_CALLS_PER_ROUND = 4
-TOOL_HISTORY_MAX_CHARS = 2400
-REQUEST_TIMEOUT = 90.0  # seconds per DeepSeek call
+MAX_ROUNDS = 4  # hard cap on tool-call rounds
+MAX_TOOL_CALLS_PER_ROUND = 6
+TOOL_HISTORY_MAX_CHARS = 1800
+REQUEST_TIMEOUT = 70.0  # seconds per DeepSeek call
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -49,7 +49,7 @@ _SYSTEM_PROMPT = """\
 ## 检索策略（优先保证准确和稳定）
 
 **第一步：broad search（必做）**
-用 hybrid_search 做初步检索，top_k=8，找到核心法条及相关法条。
+用 hybrid_search 做初步检索，top_k=6，找到核心法条及相关法条。
 
 **第二步：drill down - 反向引用（按需）**
 只有当问题涉及司法解释、程序衔接、例外细化，或 hybrid_search 未直接命中配套规定时，
@@ -61,10 +61,10 @@ _SYSTEM_PROMPT = """\
 **第四步：补充检索（建议）**
 如覆盖不完整，再做一次 hybrid_search 或 lightrag_query（mode="mix"）。
 
-复杂体系性问题通常控制在 3-5 轮工具调用内；不要为了穷尽外围材料而拖慢回答。
+复杂体系性问题通常控制在 3-4 轮工具调用内；不要为了穷尽外围材料而拖慢回答。
 
 ## 工具选用场景
-- hybrid_search：初步检索、补充检索，top_k 通常设为 8
+- hybrid_search：初步检索、补充检索，top_k 通常设为 6
 - get_citing_articles：核心法条 → 司法解释（只查最关键的 1-3 条）
 - get_article：读完整条文，获取引用关系
 - get_cited_articles：追溯某条引用的上位法依据
@@ -72,8 +72,7 @@ _SYSTEM_PROMPT = """\
 
 ## 法条引用格式（严格遵守，无一例外）
 
-在最终答案中，所有对法律条文的引用，无论是核心法条还是顺带提及的条文，
-都必须使用以下格式：
+在最终答案中，作为正式依据展开的法律条文引用，必须使用以下格式：
   [[law_id|法律名称|条号|标注]]
 
 示例：
@@ -84,14 +83,17 @@ _SYSTEM_PROMPT = """\
 1. law_id 必须从工具返回结果的 law_id=XXXX 字段直接提取，不得猜测或编造
 2. 工具结果中每条法条都显示 law_id=数字，直接复制该数字
 3. 标注字段可留空（写||即可），但 law_id、法律名称、条号三项必须准确
-4. 凡是提到法律条文，即使只是一笔带过，也必须用 [[...]] 格式
-5. 禁止使用"《民法典》第X条"这种裸文本引用方式
+4. 核心依据和直接用于推理的条文必须用 [[...]] 格式
+5. 不要为了给外围、顺带、弱相关条文补链接而继续检索；如果没有 law_id，就不要把该条作为正式依据展开
+6. 禁止使用"《民法典》第X条"这种裸文本引用方式作为核心依据
 
 ## 回答要求
 - 先给出明确结论，再展开要件/情形分析
 - 法条引用嵌入分析句子内部（不要单列法条清单）
 - 覆盖主要规定、重要司法解释细化、例外情形、程序衔接
 - 内容完整但克制，优先列核心规则；不要堆砌外围弱相关条文
+- 一般控制在 1200-1800 个中文字符；复杂问题也优先精炼，不写长表格
+- 不要输出“信息已经足够”“我来回答”等检索过程性句子，直接给答案
 - 适合法考备考场景，条理清晰
 - 所有条号必须来自工具检索结果，不得凭记忆填写
 """
@@ -101,10 +103,12 @@ _FORCE_FINAL_PROMPT = """\
 
 严格要求：
 1. 所有法条引用必须用 [[law_id|法律名称|条号|标注]] 格式，law_id 从工具结果的 law_id= 字段直接提取
-2. 凡是提到法律条文，无论核心还是顺带，都必须用 [[...]] 格式，禁止裸文本引用
+2. 核心依据和直接用于推理的条文必须用 [[...]] 格式，禁止裸文本引用
 3. 区分：主要依据（核心法条）/ 司法解释细化 / 例外情形 / 程序衔接
 4. 先给结论，后展开分析，覆盖所有重要法条和司法解释
 5. 内容完整但克制，优先呈现法考复习最需要的核心体系
+6. 控制篇幅，避免长表格和外围弱相关材料
+7. 不要输出“信息已经足够”“我来回答”等检索过程性句子，直接给答案
 """
 
 
@@ -149,13 +153,14 @@ class LegalAgent:
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
+        max_tokens: int | None = None,
     ) -> dict:
         """Send a chat completion request; return the full response dict."""
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": messages,
             "temperature": 0.1,
-            "max_tokens": 4096,
+            "max_tokens": max_tokens or (1024 if tools else 2048),
         }
         if tools:
             payload["tools"] = tools
@@ -300,7 +305,7 @@ class LegalAgent:
         # ---- MAX_ROUNDS reached: force a final synthesis ----
         logger.warning("MAX_ROUNDS (%d) reached; forcing final synthesis.", MAX_ROUNDS)
         messages.append({"role": "user", "content": _FORCE_FINAL_PROMPT})
-        response = self._chat(messages, tools=None)  # no tools → must answer
+        response = self._chat(messages, tools=None, max_tokens=2048)  # no tools → must answer
         answer = response["choices"][0]["message"].get("content") or ""
         answer = self._normalize_answer_refs(answer)
         messages.append(response["choices"][0]["message"])
