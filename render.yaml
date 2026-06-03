@@ -47,3 +47,7 @@ services:
         value: deepseek-v4-flash
       - key: DEEPSEEK_QUERY_ANALYSIS_MODEL
         value: deepseek-v4-flash
+      - key: AGENT_MAX_TOOL_CALLS_TOTAL
+        value: "24"
+      - key: AGENT_CHAT_MAX_TOKENS
+        value: "3072"

@@ -362,6 +362,8 @@ def _trim_agent_jobs(now: float | None = None) -> None:
                 path.unlink(missing_ok=True)
                 question_path = path.with_suffix(".question.json")
                 question_path.unlink(missing_ok=True)
+                log_path = path.with_suffix(".log")
+                log_path.unlink(missing_ok=True)
         except OSError:
             continue
 
@@ -436,16 +438,20 @@ def _start_agent_job(question: str, verbose: bool = False) -> str:
     if job_path is None:
         raise ValueError("invalid job id")
     question_path = job_path.with_suffix(".question.json")
+    log_path = job_path.with_suffix(".log")
     with open(question_path, "w", encoding="utf-8") as f:
         json.dump({"question": question, "verbose": verbose}, f, ensure_ascii=False)
     payload = {
         "status": "queued",
         "question": question,
+        "log_path": str(log_path),
         "created_at": now,
         "updated_at": now,
     }
     _write_agent_job(job_id, payload)
+    log_file = None
     try:
+        log_file = open(log_path, "a", encoding="utf-8")
         proc = subprocess.Popen(
             [
                 sys.executable,
@@ -456,8 +462,8 @@ def _start_agent_job(question: str, verbose: bool = False) -> str:
                 str(question_path),
             ],
             cwd=str(Path(__file__).resolve().parent),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=log_file,
             start_new_session=True,
         )
         payload.update(
@@ -476,6 +482,9 @@ def _start_agent_job(question: str, verbose: bool = False) -> str:
                 "error": f"Agent 后台任务启动失败: {str(exc)[:400]}",
             }
         )
+    finally:
+        if log_file:
+            log_file.close()
     _write_agent_job(job_id, payload)
     return job_id
 

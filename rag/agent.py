@@ -37,7 +37,9 @@ logger = logging.getLogger(__name__)
 
 MAX_ROUNDS = int(os.getenv("AGENT_MAX_ROUNDS", "12"))
 MAX_TOOL_CALLS_PER_ROUND = int(os.getenv("AGENT_MAX_TOOL_CALLS_PER_ROUND", "0"))
+MAX_TOOL_CALLS_TOTAL = int(os.getenv("AGENT_MAX_TOOL_CALLS_TOTAL", "24"))
 TOOL_HISTORY_MAX_CHARS = int(os.getenv("AGENT_TOOL_HISTORY_MAX_CHARS", "3200"))
+CHAT_MAX_TOKENS = int(os.getenv("AGENT_CHAT_MAX_TOKENS", "3072"))
 REQUEST_TIMEOUT = 90.0  # seconds per LLM call
 
 # ---------------------------------------------------------------------------
@@ -114,6 +116,7 @@ _FORCE_FINAL_PROMPT = """\
 7. 可以使用 Markdown 标题、加粗、列表、引用和必要的短表格
 8. 禁止普通代码块和 ASCII 图示；如确需图示，只能输出以 ```mermaid 开头的 Mermaid 图
 9. 不要输出“信息已经足够”“我来回答”等检索过程性句子，直接给答案
+10. 如果已经覆盖核心基本法条、主要司法解释/配套规范和程序衔接，应立即综合作答，不要继续穷尽外围条款
 """
 
 _BOUNDED_FINAL_PROMPT = """\
@@ -187,7 +190,7 @@ class LegalAgent:
             "model": self._model,
             "messages": messages,
             "temperature": 0.1,
-            "max_tokens": max_tokens or (1024 if tools else 2048),
+            "max_tokens": max_tokens or CHAT_MAX_TOKENS,
         }
         if tools:
             payload["tools"] = tools
@@ -240,6 +243,15 @@ class LegalAgent:
             r"(?:信息|材料|检索结果|证据)(?:已经|已)?(?:非常)?(?:充分|足够|完整)"
             r"[，,。]?\s*(?:可以|能够)?(?:给出|作出)?(?:完整|准确|最终)?(?:准确)?"
             r"(?:的)?(?:回答|答案|结论)了?[。:：]?\s*",
+            "",
+            text,
+            flags=re.S,
+        )
+        text = re.sub(
+            r"^\s*(好的[，,。]?\s*)?(?:现在)?\s*"
+            r"(?:信息|材料|检索结果|证据)(?:已经|已)?(?:非常)?"
+            r"(?:充分|足够|完整|全面)了?[。:：]?\s*"
+            r"(?:让我|下面|接下来)?(?:整理|给出|作出).*?(?:回答|答案|结论)[。:：]?\s*",
             "",
             text,
             flags=re.S,
@@ -479,6 +491,7 @@ class LegalAgent:
         ]
         tool_call_log: list[dict] = []
         rounds = 0
+        force_reason = ""
 
         while rounds < MAX_ROUNDS:
             rounds += 1
@@ -545,8 +558,17 @@ class LegalAgent:
                     }
                 )
 
-        # ---- MAX_ROUNDS reached: force a final synthesis ----
-        logger.warning("MAX_ROUNDS (%d) reached; forcing final synthesis.", MAX_ROUNDS)
+            if (
+                MAX_TOOL_CALLS_TOTAL > 0
+                and len(tool_call_log) >= MAX_TOOL_CALLS_TOTAL
+            ):
+                force_reason = f"MAX_TOOL_CALLS_TOTAL ({MAX_TOOL_CALLS_TOTAL})"
+                break
+
+        # ---- Guardrail reached: force a final synthesis ----
+        if not force_reason:
+            force_reason = f"MAX_ROUNDS ({MAX_ROUNDS})"
+        logger.warning("%s reached; forcing final synthesis.", force_reason)
         messages.append({"role": "user", "content": _FORCE_FINAL_PROMPT})
         response = self._chat(messages, tools=None, max_tokens=3072)  # no tools → must answer
         answer = response["choices"][0]["message"].get("content") or ""

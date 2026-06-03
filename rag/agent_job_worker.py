@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import time
@@ -16,6 +17,10 @@ def _write_job(job_path: Path, payload: dict) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s  %(levelname)-7s  %(name)s  %(message)s",
+    )
     argv = argv or sys.argv[1:]
     if len(argv) != 3:
         print("usage: python -m rag.agent_job_worker JOB_ID JOB_FILE QUESTION_FILE", file=sys.stderr)
