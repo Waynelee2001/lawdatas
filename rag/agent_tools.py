@@ -79,6 +79,7 @@ def hybrid_search(
             graph_expand_k=3,
             law_ids=law_ids,
             compress=False,  # agent will synthesise itself
+            use_llm_analysis=False,
         )
 
         lines: list[str] = [f"【hybrid_search 结果】查询：{query}"]

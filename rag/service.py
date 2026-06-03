@@ -200,6 +200,7 @@ def run_rag_query(
     graph_expand_k: int = 3,
     law_ids: set[str] | None = None,
     compress: bool = True,
+    use_llm_analysis: bool = True,
 ) -> dict[str, Any]:
     """
     Execute the full hybrid RAG pipeline and return a serialisable result dict.
@@ -220,8 +221,10 @@ def run_rag_query(
     """
 
     # ------------------------------------------------------------------ 1 --
-    # Query analysis: try LLM first, fall back to rule-based
-    query_profile = _analyze_query(query)
+    # Query analysis: try LLM first, fall back to rule-based.
+    # Agent tools may disable the extra LLM hop because the Agent already
+    # reasons over the question before deciding which search tool to call.
+    query_profile = _analyze_query(query, use_llm=use_llm_analysis)
     logger.info(
         "Query profile — type=%s concept=%r topic=%r llm=%s provider=%s expanded_terms=%s",
         query_profile.query_type,
@@ -301,7 +304,7 @@ def run_rag_query(
 # ---------------------------------------------------------------------------
 
 
-def _analyze_query(query: str):
+def _analyze_query(query: str, *, use_llm: bool = True):
     """
     Run LLM-powered query analysis when possible; fall back to rule-based.
 
@@ -309,7 +312,7 @@ def _analyze_query(query: str):
     falls back to the SiliconFlow chat model.  If the LLM call fails for
     any reason, rule-based analysis is used as a final safety net.
     """
-    if not settings.chat_api_key:
+    if not use_llm or not settings.chat_api_key:
         return analyze_query(query)
 
     try:
