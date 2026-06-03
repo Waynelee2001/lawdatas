@@ -1119,7 +1119,9 @@
       var lawId = String(match[1] || "").trim();
       var lawName = String(match[2] || "").trim();
       var articleNum = String(match[3] || "").trim();
-      var annotation = String(match[4] || "").trim();
+      var annotation = String(match[4] || "")
+        .trim()
+        .replace(/^\|+|\|+$/g, "");
       var key = [
         lawId,
         articleNum,
@@ -1432,7 +1434,9 @@
     lawId = String(lawId || "").trim();
     lawName = String(lawName || "").trim();
     articleNum = String(articleNum || "").trim();
-    annotation = String(annotation || "").trim();
+    annotation = String(annotation || "")
+      .trim()
+      .replace(/^\|+|\|+$/g, "");
     if (!lawId || !lawName || !articleNum || !_isLinkableArticleNum(articleNum)) {
       var plain = lawName ? "《" + lawName + "》" + articleNum : articleNum;
       if (annotation) plain += "【" + annotation + "】";
