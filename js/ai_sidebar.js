@@ -15,6 +15,8 @@
   var _lawNameToId = {}; // full/short law name → law_id
   var _lawIdToName = {}; // law_id → canonical full name
   var _lawAutoLinkRe = null; // compiled regex for auto-linking
+  var _mermaidLoading = false;
+  var _mermaidCallbacks = [];
 
   function _buildLawAutoLinkRegex() {
     var names = Object.keys(_lawNameToId);
@@ -70,6 +72,39 @@
       .catch(function () {});
   }
 
+  function _isLinkableArticleNum(articleNum) {
+    return /^第[一二三四五六七八九十百千万亿零○〇0-9]+条(?:之[一二三四五六七八九十百千万亿零○〇0-9]+)?$/.test(
+      String(articleNum || "").trim(),
+    );
+  }
+
+  function _configureMermaid() {
+    if (!window.mermaid || window.mermaid.__lawAiConfigured) return;
+    window.mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: "strict",
+      theme: "base",
+      themeVariables: {
+        primaryColor: "#f8efdd",
+        primaryTextColor: "#4b3822",
+        primaryBorderColor: "#d8c4a0",
+        lineColor: "#a57435",
+        secondaryColor: "#fffaf1",
+        tertiaryColor: "#f3ead7",
+        fontFamily: "inherit",
+      },
+    });
+    window.mermaid.__lawAiConfigured = true;
+  }
+
+  function _flushMermaidCallbacks(success) {
+    var callbacks = _mermaidCallbacks.slice();
+    _mermaidCallbacks = [];
+    callbacks.forEach(function (callback) {
+      callback(success);
+    });
+  }
+
   function AISidebar() {
     this.abortController = null;
     this.sessionMessages = [];
@@ -77,6 +112,8 @@
     this.sidebarWidth = DEFAULT_WIDTH;
     this.isResizing = false;
     this.agentMode = true;
+    this._mermaidSeq = 0;
+    this._mermaidTimer = null;
   }
 
   // ---------------------------------------------------------------------------
@@ -268,6 +305,10 @@
       ".ai-markdown code { border: 1px solid rgba(214,198,170,.7); border-radius: 5px; background: rgba(248,239,221,.65); padding: 1px 5px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }",
       ".ai-markdown pre { box-sizing: border-box; max-width: 100%; overflow-x: auto; white-space: pre-wrap; word-break: break-word; margin: 10px 0 14px; padding: 10px 12px; border: 1px solid rgba(214,198,170,.72); border-radius: 10px; background: rgba(255,253,248,.9); color: #6a5235; font-size: 12px; line-height: 1.55; }",
       ".ai-markdown pre code { border: 0; background: transparent; padding: 0; font-size: inherit; }",
+      ".ai-mermaid-wrap { box-sizing: border-box; max-width: 100%; overflow-x: auto; margin: 12px 0 14px; padding: 10px; border: 1px solid rgba(214,198,170,.72); border-radius: 10px; background: rgba(255,253,248,.92); }",
+      ".ai-mermaid { min-width: 0; text-align: center; color: #5b4126; }",
+      ".ai-mermaid svg { max-width: 100%; height: auto; }",
+      ".ai-mermaid-error { color: #b3372c; font-size: 12px; line-height: 1.6; }",
       ".ai-md-table-wrap { max-width: 100%; overflow-x: auto; margin: 10px 0 14px; border: 1px solid rgba(214,198,170,.72); border-radius: 10px; background: rgba(255,253,248,.9); }",
       ".ai-md-table { width: 100%; min-width: 0; table-layout: fixed; border-collapse: collapse; font-size: 12px; line-height: 1.55; }",
       ".ai-md-table th, .ai-md-table td { padding: 8px 10px; border-bottom: 1px solid rgba(214,198,170,.55); border-right: 1px solid rgba(214,198,170,.4); vertical-align: top; text-align: left; word-break: break-word; overflow-wrap: anywhere; }",
@@ -984,26 +1025,32 @@
     var tokenIndex = 0;
     while ((match = regex.exec(text)) !== null) {
       tokenized += String(text || "").slice(lastIndex, match.index);
+      var lawId = String(match[1] || "").trim();
+      var lawName = String(match[2] || "").trim();
+      var articleNum = String(match[3] || "").trim();
+      var annotation = String(match[4] || "").trim();
       var key = [
-        String(match[1] || "").trim(),
-        String(match[3] || "").trim(),
+        lawId,
+        articleNum,
       ].join(":");
       var token = "@@AILAWREF" + tokenIndex++ + "@@";
-      if (!seen[key]) {
-        tokenMap[token] = this.buildLawRef(match[1], match[2], match[3], match[4]);
+      if (!seen[key] || !_isLinkableArticleNum(articleNum)) {
+        tokenMap[token] = this.buildLawRef(lawId, lawName, articleNum, annotation);
+      }
+      if (_isLinkableArticleNum(articleNum) && !seen[key]) {
         refs.push({
-          law_id: String(match[1] || "").trim(),
-          law_name: String(match[2] || "").trim(),
-          article_num: String(match[3] || "").trim(),
-          annotation: String(match[4] || "").trim(),
+          law_id: lawId,
+          law_name: lawName,
+          article_num: articleNum,
+          annotation: annotation,
         });
         seen[key] = true;
-      } else {
+      } else if (_isLinkableArticleNum(articleNum) && seen[key]) {
         tokenMap[token] = this.escapeHtml(
           "《" +
-            String(match[2] || "").trim() +
+            lawName +
             "》" +
-            String(match[3] || "").trim(),
+            articleNum,
         );
       }
       tokenized += token;
@@ -1011,6 +1058,71 @@
     }
     tokenized += String(text || "").slice(lastIndex);
     return { html: this.renderMarkdown(tokenized, tokenMap), refs: refs };
+  };
+
+  AISidebar.prototype.scheduleMermaidRender = function () {
+    var self = this;
+    clearTimeout(this._mermaidTimer);
+    this._mermaidTimer = setTimeout(function () {
+      self.renderMermaidDiagrams();
+    }, 0);
+  };
+
+  AISidebar.prototype.ensureMermaid = function (callback) {
+    if (window.mermaid) {
+      _configureMermaid();
+      callback(true);
+      return;
+    }
+    _mermaidCallbacks.push(callback);
+    if (_mermaidLoading) return;
+    _mermaidLoading = true;
+    var script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js";
+    script.async = true;
+    script.onload = function () {
+      _mermaidLoading = false;
+      _configureMermaid();
+      _flushMermaidCallbacks(!!window.mermaid);
+    };
+    script.onerror = function () {
+      _mermaidLoading = false;
+      _flushMermaidCallbacks(false);
+    };
+    document.head.appendChild(script);
+  };
+
+  AISidebar.prototype.renderMermaidDiagrams = function () {
+    var nodes = Array.prototype.slice.call(
+      document.querySelectorAll("#aiSidebar .ai-mermaid:not([data-rendered])"),
+    );
+    if (!nodes.length) return;
+    this.ensureMermaid(
+      function (ready) {
+        nodes.forEach(function (node) {
+          var wrap = node.closest(".ai-mermaid-wrap") || node;
+          if (!ready || !window.mermaid) {
+            wrap.innerHTML =
+              '<div class="ai-mermaid-error">图示暂未渲染，请检查网络后重试。</div>';
+            return;
+          }
+          var source = node.textContent || "";
+          var renderId =
+            (node.id || "aiMermaid") +
+            "_svg_" +
+            Math.random().toString(36).slice(2);
+          Promise.resolve(window.mermaid.render(renderId, source))
+            .then(function (result) {
+              node.innerHTML = result.svg || result;
+              node.setAttribute("data-rendered", "1");
+            })
+            .catch(function () {
+              wrap.innerHTML =
+                '<div class="ai-mermaid-error">图示渲染失败，已隐藏原始图示源码。</div>';
+            });
+        });
+      }.bind(this),
+    );
   };
 
   AISidebar.prototype.renderMarkdown = function (text, tokenMap) {
@@ -1032,6 +1144,8 @@
         continue;
       }
       if (/^```/.test(trimmed)) {
+        var fence = trimmed.match(/^```\s*([A-Za-z0-9_-]+)?/);
+        var lang = (fence && fence[1] ? fence[1] : "").toLowerCase();
         var codeLines = [];
         i++;
         while (i < lines.length && !/^```/.test(lines[i].trim())) {
@@ -1039,9 +1153,26 @@
           i++;
         }
         if (i < lines.length) i++;
-        html.push(
-          "<pre><code>" + this.escapeHtml(codeLines.join("\n")) + "</code></pre>",
-        );
+        if (lang === "mermaid") {
+          var mermaidId = "aiMermaid_" + Date.now() + "_" + this._mermaidSeq++;
+          html.push(
+            '<div class="ai-mermaid-wrap"><div class="ai-mermaid" id="' +
+              this.escapeAttr(mermaidId) +
+              '">' +
+              this.escapeHtml(codeLines.join("\n").trim()) +
+              "</div></div>",
+          );
+          this.scheduleMermaidRender();
+        } else {
+          var prose = codeLines.join("\n").trim();
+          if (prose) {
+            html.push(
+              "<p>" +
+                this.renderInlineMarkdown(prose.replace(/\n+/g, " "), tokenMap) +
+                "</p>",
+            );
+          }
+        }
         continue;
       }
       var heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
@@ -1107,6 +1238,7 @@
         if (
           !next ||
           /^(?:#{1,6}\s+|>{1}\s*|[-*+]\s+|\d+[.)]\s+)/.test(next) ||
+          /^```/.test(next) ||
           /^(?:-{3,}|\*{3,}|_{3,})$/.test(next) ||
           this.isMarkdownTable(lines, i)
         ) {
@@ -1210,8 +1342,10 @@
     lawName = String(lawName || "").trim();
     articleNum = String(articleNum || "").trim();
     annotation = String(annotation || "").trim();
-    if (!lawId || !lawName || !articleNum) {
-      return this.escapeHtml([lawName, articleNum].join(" ").trim());
+    if (!lawId || !lawName || !articleNum || !_isLinkableArticleNum(articleNum)) {
+      var plain = lawName ? "《" + lawName + "》" + articleNum : articleNum;
+      if (annotation) plain += "【" + annotation + "】";
+      return this.escapeHtml(plain || [lawName, articleNum].join(" ").trim());
     }
     var full = lawName + " " + articleNum;
     var displayName = _lawIdToName[lawId] || lawName;
