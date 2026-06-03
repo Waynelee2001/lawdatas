@@ -1,4 +1,5 @@
 import datetime
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import hmac
 import json
@@ -8,6 +9,8 @@ import os
 import secrets
 import subprocess
 import sys
+import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -24,6 +27,12 @@ CORS(app)
 # Serverless defaults to /tmp; persistent hosts can mount these paths to a disk.
 DB_FILE = os.environ.get("USERS_DB_FILE", "/tmp/users.json")
 CODES_FILE = os.environ.get("CODES_DB_FILE", "/tmp/codes.json")
+AGENT_JOB_WORKERS = int(os.environ.get("AGENT_JOB_WORKERS", "2"))
+AGENT_JOB_TTL_SECONDS = int(os.environ.get("AGENT_JOB_TTL_SECONDS", "1800"))
+
+_agent_executor = ThreadPoolExecutor(max_workers=max(1, AGENT_JOB_WORKERS))
+_agent_jobs: dict[str, dict] = {}
+_agent_jobs_lock = threading.Lock()
 
 # ============================================================
 # 核心密钥 —— 请勿泄露！
@@ -325,6 +334,110 @@ def rag_env_fingerprint():
     )
 
 
+def _run_agent_query_sync(question: str, verbose: bool = False) -> dict:
+    try:
+        from rag.agent import run_agent_query
+
+        return run_agent_query(question, verbose=verbose)
+    except ModuleNotFoundError:
+        venv_python = Path(__file__).resolve().parent / ".venv" / "bin" / "python"
+        if not venv_python.exists():
+            raise
+        proc = subprocess.run(
+            [str(venv_python), "-m", "rag.agent", question],
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=300,
+        )
+        try:
+            return json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            return {"answer": proc.stdout.strip(), "rounds": 1, "tool_calls": []}
+
+
+def _trim_agent_jobs(now: float | None = None) -> None:
+    now = now or time.time()
+    cutoff = now - AGENT_JOB_TTL_SECONDS
+    with _agent_jobs_lock:
+        stale_ids = [
+            job_id
+            for job_id, job in _agent_jobs.items()
+            if float(job.get("updated_at", job.get("created_at", now))) < cutoff
+        ]
+        for job_id in stale_ids:
+            _agent_jobs.pop(job_id, None)
+
+
+def _agent_job_snapshot(job_id: str) -> dict | None:
+    with _agent_jobs_lock:
+        job = _agent_jobs.get(job_id)
+        if not job:
+            return None
+        payload = dict(job)
+    payload["job_id"] = job_id
+    started_at = payload.get("started_at") or payload.get("created_at")
+    payload["elapsed_seconds"] = round(max(0.0, time.time() - float(started_at)), 1)
+    return payload
+
+
+def _run_agent_job(job_id: str, question: str, verbose: bool) -> None:
+    with _agent_jobs_lock:
+        job = _agent_jobs.get(job_id)
+        if not job:
+            return
+        job.update(
+            {
+                "status": "running",
+                "started_at": time.time(),
+                "updated_at": time.time(),
+            }
+        )
+    try:
+        result = _run_agent_query_sync(question, verbose=verbose)
+        with _agent_jobs_lock:
+            job = _agent_jobs.get(job_id)
+            if job:
+                job.update(
+                    {
+                        "status": "done",
+                        "updated_at": time.time(),
+                        "result": {
+                            "answer": result.get("answer", ""),
+                            "rounds": result.get("rounds", 0),
+                            "tool_calls": result.get("tool_calls", []),
+                        },
+                    }
+                )
+    except Exception as exc:
+        logger.exception("agent background job failed: %s", job_id)
+        with _agent_jobs_lock:
+            job = _agent_jobs.get(job_id)
+            if job:
+                job.update(
+                    {
+                        "status": "error",
+                        "updated_at": time.time(),
+                        "error": f"Agent 查询失败: {str(exc)[:400]}",
+                    }
+                )
+
+
+def _start_agent_job(question: str, verbose: bool = False) -> str:
+    _trim_agent_jobs()
+    job_id = uuid.uuid4().hex
+    now = time.time()
+    with _agent_jobs_lock:
+        _agent_jobs[job_id] = {
+            "status": "queued",
+            "question": question,
+            "created_at": now,
+            "updated_at": now,
+        }
+    _agent_executor.submit(_run_agent_job, job_id, question, verbose)
+    return job_id
+
+
 @app.route("/api/rag/query", methods=["POST"])
 def rag_query():
     data = request.json or {}
@@ -411,32 +524,27 @@ def agent_query():
     data = request.json or {}
     question = (data.get("question") or "").strip()
     verbose = bool(data.get("verbose", False))
+    async_requested = bool(data.get("async", False) or data.get("background", False))
+    sync_requested = bool(data.get("sync", False))
 
     if not question:
         return jsonify({"code": 400, "msg": "question 不能为空"}), 400
 
-    try:
-        try:
-            from rag.agent import run_agent_query
+    if async_requested and not sync_requested:
+        job_id = _start_agent_job(question, verbose=verbose)
+        return (
+            jsonify(
+                {
+                    "code": 202,
+                    "msg": "accepted",
+                    "data": {"job_id": job_id, "status": "queued"},
+                }
+            ),
+            202,
+        )
 
-            result = run_agent_query(question, verbose=verbose)
-        except ModuleNotFoundError:
-            venv_python = Path(__file__).resolve().parent / ".venv" / "bin" / "python"
-            if not venv_python.exists():
-                raise
-            proc = subprocess.run(
-                [str(venv_python), "-m", "rag.agent", question],
-                text=True,
-                capture_output=True,
-                check=True,
-                timeout=300,
-            )
-            # agent CLI prints JSON when called as a module with --json flag;
-            # fall back to wrapping stdout as the answer
-            try:
-                result = json.loads(proc.stdout)
-            except json.JSONDecodeError:
-                result = {"answer": proc.stdout.strip(), "rounds": 1, "tool_calls": []}
+    try:
+        result = _run_agent_query_sync(question, verbose=verbose)
 
         return jsonify(
             {
@@ -458,6 +566,15 @@ def agent_query():
     except Exception as exc:
         logger.exception("agent_query failed")
         return jsonify({"code": 500, "msg": f"Agent 查询失败: {exc}"}), 500
+
+
+@app.route("/api/agent/job/<job_id>", methods=["GET"])
+def agent_job_status(job_id):
+    _trim_agent_jobs()
+    payload = _agent_job_snapshot(job_id)
+    if not payload:
+        return jsonify({"code": 404, "msg": "Agent 任务不存在或已过期"}), 404
+    return jsonify({"code": 200, "msg": "ok", "data": payload})
 
 
 # ============================================================

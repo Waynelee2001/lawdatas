@@ -657,13 +657,19 @@
       '  <div class="ai-agent-thinking-dot"></div>',
       '  <div class="ai-agent-thinking-dot"></div>',
       '  <div class="ai-agent-thinking-dot"></div>',
-      "  <span>Agent 多轮检索中，请稍候（约 30–60 秒）…</span>",
+      "  <span>Agent 多轮检索中，请稍候…</span>",
       "</div>",
     ].join("");
     this.setBusy(true);
     this.scrollChatToBottom();
     try {
-      var result = await this.fetchAgent(question);
+      var result = await this.fetchAgent(
+        question,
+        function (status) {
+          assistantNode.innerHTML = this.renderAgentThinking(status);
+          this.scrollChatToBottom();
+        }.bind(this),
+      );
       assistantNode.innerHTML = this.renderAgentResult(result);
       this.sessionMessages.push({ role: "user", content: question });
       this.sessionMessages.push({
@@ -672,27 +678,112 @@
       });
       this.trimSessionHistory();
     } catch (error) {
-      assistantNode.innerHTML =
-        '<span class="ai-msg-error">Agent 查询失败：' +
-        this.escapeHtml(error.message || "未知错误") +
-        "</span>";
+      if (error && error.name === "AbortError") {
+        assistantNode.innerHTML =
+          '<span class="ai-msg-error">已停止等待本次 Agent 查询。</span>';
+      } else {
+        assistantNode.innerHTML =
+          '<span class="ai-msg-error">Agent 查询失败：' +
+          this.escapeHtml(error.message || "未知错误") +
+          "</span>";
+      }
     } finally {
+      this.abortController = null;
       this.setBusy(false);
       this.scrollChatToBottom();
     }
   };
 
-  AISidebar.prototype.fetchAgent = async function (question) {
+  AISidebar.prototype.renderAgentThinking = function (status) {
+    status = status || {};
+    var elapsed = Number(status.elapsed_seconds || 0);
+    var statusText =
+      status.status === "queued"
+        ? "排队中"
+        : status.status === "running"
+          ? "多轮检索中"
+          : "处理中";
+    return [
+      '<div class="ai-agent-thinking">',
+      '  <div class="ai-agent-thinking-dot"></div>',
+      '  <div class="ai-agent-thinking-dot"></div>',
+      '  <div class="ai-agent-thinking-dot"></div>',
+      "  <span>Agent " +
+        this.escapeHtml(statusText) +
+        (elapsed ? "，已运行 " + Math.round(elapsed) + " 秒" : "") +
+        "…</span>",
+      "</div>",
+    ].join("");
+  };
+
+  AISidebar.prototype.delay = function (ms, signal) {
+    return new Promise(function (resolve, reject) {
+      if (signal && signal.aborted) {
+        reject(new DOMException("Aborted", "AbortError"));
+        return;
+      }
+      var timer = setTimeout(resolve, ms);
+      if (signal) {
+        signal.addEventListener(
+          "abort",
+          function () {
+            clearTimeout(timer);
+            reject(new DOMException("Aborted", "AbortError"));
+          },
+          { once: true },
+        );
+      }
+    });
+  };
+
+  AISidebar.prototype.fetchAgent = async function (question, onStatus) {
+    this.abortController = new AbortController();
+    var signal = this.abortController.signal;
     var response = await fetch(this.getBackendBaseUrl() + "/api/agent/query", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: question, verbose: false }),
+      signal: signal,
+      body: JSON.stringify({ question: question, verbose: false, async: true }),
     });
     var payload = await this.parseJsonResponse(response, "Agent 查询失败");
+    if (
+      response.status === 202 &&
+      payload &&
+      payload.code === 202 &&
+      payload.data &&
+      payload.data.job_id
+    ) {
+      if (onStatus) onStatus(payload.data);
+      return this.pollAgentJob(payload.data.job_id, signal, onStatus);
+    }
     if (!response.ok || !payload || payload.code !== 200) {
       throw new Error((payload && payload.msg) || "Agent 查询失败");
     }
     return payload.data;
+  };
+
+  AISidebar.prototype.pollAgentJob = async function (jobId, signal, onStatus) {
+    while (true) {
+      await this.delay(3000, signal);
+      var response = await fetch(
+        this.getBackendBaseUrl() +
+          "/api/agent/job/" +
+          encodeURIComponent(jobId),
+        { signal: signal },
+      );
+      var payload = await this.parseJsonResponse(response, "Agent 查询失败");
+      if (!response.ok || !payload || payload.code !== 200) {
+        throw new Error((payload && payload.msg) || "Agent 查询失败");
+      }
+      var data = payload.data || {};
+      if (onStatus) onStatus(data);
+      if (data.status === "done") {
+        return data.result || {};
+      }
+      if (data.status === "error") {
+        throw new Error(data.error || "Agent 查询失败");
+      }
+    }
   };
 
   AISidebar.prototype.renderAgentResult = function (data) {
