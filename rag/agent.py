@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 MAX_ROUNDS = int(os.getenv("AGENT_MAX_ROUNDS", "12"))
 MAX_TOOL_CALLS_PER_ROUND = int(os.getenv("AGENT_MAX_TOOL_CALLS_PER_ROUND", "0"))
 MAX_TOOL_CALLS_TOTAL = int(os.getenv("AGENT_MAX_TOOL_CALLS_TOTAL", "24"))
-TOOL_HISTORY_MAX_CHARS = int(os.getenv("AGENT_TOOL_HISTORY_MAX_CHARS", "6000"))
+TOOL_HISTORY_MAX_CHARS = int(os.getenv("AGENT_TOOL_HISTORY_MAX_CHARS", "8000"))
 CHAT_MAX_TOKENS = int(os.getenv("AGENT_CHAT_MAX_TOKENS", "3072"))
 REQUEST_TIMEOUT = 90.0  # seconds per LLM call
 
@@ -58,7 +58,7 @@ _SYSTEM_PROMPT = """\
 
 **第一步：知识图谱优先检索（必做，默认首选）**
 用 knowledge_graph_search 做首轮检索：
-- seed_top_k=10
+- seed_top_k=15
 - graph_depth=2
 - graph_expand_k=4
 
@@ -87,7 +87,7 @@ _SYSTEM_PROMPT = """\
 
 ## 工具选用场景
 - knowledge_graph_search：默认首轮工具，关键词+向量+BM25+引用知识图谱扩展
-- hybrid_search：初步检索、补充检索，top_k 通常设为 8-10
+- hybrid_search：补充检索，top_k 通常设为 10-15
 - get_citing_articles：核心法条 → 司法解释和配套规定
 - get_article：读完整条文，获取引用关系
 - get_cited_articles：追溯某条引用的上位法依据
@@ -364,7 +364,7 @@ class LegalAgent:
         results = self._prioritize_bounded_results(
             str(rag_data.get("query", "") or ""), rag_data.get("results", []) or []
         )
-        for i, item in enumerate(results[:10], 1):
+        for i, item in enumerate(results[:15], 1):
             law_id = str(item.get("law_id", "")).strip()
             law_name = str(item.get("law_name", "")).strip()
             article_num = str(item.get("article_num", "")).strip()
@@ -437,7 +437,7 @@ class LegalAgent:
         t0 = time.perf_counter()
         rag_data = run_rag_query(
             question,
-            top_k=10,
+            top_k=15,
             graph_expand_k=4,
             compress=False,
             use_llm_analysis=False,
@@ -448,7 +448,7 @@ class LegalAgent:
                 "round": 1,
                 "tool": "bounded_hybrid_search",
                 "args": json.dumps(
-                    {"query": question, "top_k": 10, "graph_expand_k": 4},
+                    {"query": question, "top_k": 15, "graph_expand_k": 4},
                     ensure_ascii=False,
                 ),
                 "output_preview": context[:300],

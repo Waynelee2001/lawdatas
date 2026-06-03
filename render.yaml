@@ -52,4 +52,4 @@ services:
       - key: AGENT_CHAT_MAX_TOKENS
         value: "3072"
       - key: AGENT_TOOL_HISTORY_MAX_CHARS
-        value: "6000"
+        value: "8000"

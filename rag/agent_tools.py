@@ -108,7 +108,7 @@ def _rank_graph_edges(
 
 def knowledge_graph_search(
     query: str,
-    seed_top_k: int = 10,
+    seed_top_k: int = 15,
     graph_depth: int = 2,
     graph_expand_k: int = 4,
     law_name_filter: str | None = None,
@@ -129,7 +129,7 @@ def knowledge_graph_search(
         from rag.loader import build_article_lookup
         from rag.service import run_rag_query
 
-        seed_top_k = min(max(4, int(seed_top_k or 10)), 12)
+        seed_top_k = min(max(4, int(seed_top_k or 15)), 15)
         graph_depth = min(max(1, int(graph_depth or 2)), 3)
         graph_expand_k = min(max(1, int(graph_expand_k or 4)), 8)
 
@@ -187,10 +187,10 @@ def knowledge_graph_search(
 
         lines.append("【二、围绕核心条文的知识图谱链路】")
         seen_nodes: set[str] = set(seed_business_ids)
-        graph_seed_limit = min(seed_top_k, 6)
+        graph_seed_limit = min(seed_top_k, 8)
         frontier = seed_business_ids[:graph_seed_limit]
         total_edges = 0
-        max_total_edges = min(20, graph_seed_limit * graph_expand_k * graph_depth)
+        max_total_edges = min(28, graph_seed_limit * graph_expand_k * graph_depth)
 
         for depth in range(1, graph_depth + 1):
             next_frontier: list[str] = []
@@ -262,7 +262,7 @@ def knowledge_graph_search(
 
 def hybrid_search(
     query: str,
-    top_k: int = 10,
+    top_k: int = 15,
     law_name_filter: str | None = None,
 ) -> str:
     """
@@ -275,7 +275,7 @@ def hybrid_search(
     query:
         Natural-language legal question.
     top_k:
-        Number of results to return (1-10).
+        Number of results to return (1-15).
     law_name_filter:
         Optional partial law name (e.g. "民法典", "公司法") to restrict
         results to a single statute.
@@ -308,7 +308,7 @@ def hybrid_search(
 
         result = run_rag_query(
             query,
-            top_k=min(max(1, top_k), 10),
+            top_k=min(max(1, top_k), 15),
             graph_expand_k=3,
             law_ids=law_ids,
             compress=False,  # agent will synthesise itself
@@ -695,8 +695,8 @@ TOOL_SCHEMAS: list[dict] = [
                     },
                     "seed_top_k": {
                         "type": "integer",
-                        "description": "核心命中条文数量，默认10，通常用10",
-                        "default": 10,
+                        "description": "核心命中条文数量，默认15，通常用15",
+                        "default": 15,
                     },
                     "graph_depth": {
                         "type": "integer",
@@ -734,8 +734,8 @@ TOOL_SCHEMAS: list[dict] = [
                     },
                     "top_k": {
                         "type": "integer",
-                        "description": "返回结果数量，1-12，默认10",
-                        "default": 10,
+                        "description": "返回结果数量，1-15，默认15",
+                        "default": 15,
                     },
                     "law_name_filter": {
                         "type": "string",

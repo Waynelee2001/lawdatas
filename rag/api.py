@@ -18,7 +18,7 @@ def main() -> None:
         law_ids = [item.strip() for item in law_ids.split(',') if item.strip()]
     result = run_rag_query(
         query,
-        top_k=max(1, min(top_k, 12)),
+        top_k=max(1, min(top_k, 15)),
         graph_expand_k=max(0, min(graph_expand_k, 6)),
         law_ids={str(item).strip() for item in law_ids if str(item).strip()} or None,
         compress=compress,

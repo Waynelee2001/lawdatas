@@ -511,7 +511,7 @@ def rag_query():
 
             payload = run_rag_query(
                 query,
-                top_k=max(1, min(top_k, 12)),
+                top_k=max(1, min(top_k, 15)),
                 graph_expand_k=max(0, min(graph_expand_k, 6)),
                 law_ids=law_id_set,
                 compress=compress,
@@ -525,7 +525,7 @@ def rag_query():
                 input=json.dumps(
                     {
                         "query": query,
-                        "top_k": max(1, min(top_k, 12)),
+                        "top_k": max(1, min(top_k, 15)),
                         "graph_expand_k": max(0, min(graph_expand_k, 6)),
                         "law_ids": sorted(law_id_set) if law_id_set else [],
                         "compress": compress,
