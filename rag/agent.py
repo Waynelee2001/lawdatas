@@ -35,10 +35,10 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-MAX_ROUNDS = 4  # hard cap on tool-call rounds
-MAX_TOOL_CALLS_PER_ROUND = 6
-TOOL_HISTORY_MAX_CHARS = 1800
-REQUEST_TIMEOUT = 70.0  # seconds per DeepSeek call
+MAX_ROUNDS = int(os.getenv("AGENT_MAX_ROUNDS", "12"))
+MAX_TOOL_CALLS_PER_ROUND = int(os.getenv("AGENT_MAX_TOOL_CALLS_PER_ROUND", "0"))
+TOOL_HISTORY_MAX_CHARS = int(os.getenv("AGENT_TOOL_HISTORY_MAX_CHARS", "3200"))
+REQUEST_TIMEOUT = 90.0  # seconds per LLM call
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -47,26 +47,26 @@ REQUEST_TIMEOUT = 70.0  # seconds per DeepSeek call
 _SYSTEM_PROMPT = """\
 你是专业的法考（中国法律职业资格考试）辅导助手，拥有完整的中国法律法条库检索能力。
 
-## 检索策略（优先保证准确和稳定）
+## 检索策略（质量优先）
 
 **第一步：broad search（必做）**
-用 hybrid_search 做初步检索，top_k=6，找到核心法条及相关法条。
+用 hybrid_search 做初步检索，top_k=10，找到核心法条及相关法条。
 
 **第二步：drill down - 反向引用（按需）**
 只有当问题涉及司法解释、程序衔接、例外细化，或 hybrid_search 未直接命中配套规定时，
-才对最重要的 1-3 条核心法条用 get_citing_articles 查反向引用。
+对重要核心法条用 get_citing_articles 查反向引用。
 
 **第三步：read full text（必做）**
-对最重要的 2-3 条法条，用 get_article 读完整正文，确认细节和引用关系。
+对重要法条，用 get_article 读完整正文，确认细节和引用关系。
 
 **第四步：补充检索（建议）**
 如覆盖不完整，再做一次 hybrid_search 或 lightrag_query（mode="mix"）。
 
-复杂体系性问题通常控制在 3-4 轮工具调用内；不要为了穷尽外围材料而拖慢回答。
+复杂体系性问题可以继续检索到依据充分为止，但不要堆砌明显弱相关材料。
 
 ## 工具选用场景
-- hybrid_search：初步检索、补充检索，top_k 通常设为 6
-- get_citing_articles：核心法条 → 司法解释（只查最关键的 1-3 条）
+- hybrid_search：初步检索、补充检索，top_k 通常设为 8-10
+- get_citing_articles：核心法条 → 司法解释和配套规定
 - get_article：读完整条文，获取引用关系
 - get_cited_articles：追溯某条引用的上位法依据
 - lightrag_query：体系性综述，mode="mix" 或 "global"
@@ -92,8 +92,8 @@ _SYSTEM_PROMPT = """\
 - 先给出明确结论，再展开要件/情形分析
 - 法条引用嵌入分析句子内部（不要单列法条清单）
 - 覆盖主要规定、重要司法解释细化、例外情形、程序衔接
-- 内容完整但克制，优先列核心规则；不要堆砌外围弱相关条文
-- 一般控制在 1200-1800 个中文字符；复杂问题也优先精炼，不写长表格
+- 内容完整，优先列核心规则和必要配套规定；不要堆砌外围弱相关条文
+- 不写 Markdown 表格、代码块、ASCII 图示或流程图，避免撑乱侧栏
 - 不要输出“信息已经足够”“我来回答”等检索过程性句子，直接给答案
 - 适合法考备考场景，条理清晰
 - 所有条号必须来自工具检索结果，不得凭记忆填写
@@ -107,8 +107,8 @@ _FORCE_FINAL_PROMPT = """\
 2. 核心依据和直接用于推理的条文必须用 [[...]] 格式，禁止裸文本引用
 3. 区分：主要依据（核心法条）/ 司法解释细化 / 例外情形 / 程序衔接
 4. 先给结论，后展开分析，覆盖所有重要法条和司法解释
-5. 内容完整但克制，优先呈现法考复习最需要的核心体系
-6. 控制篇幅，避免长表格和外围弱相关材料
+5. 内容完整，优先呈现法考复习最需要的核心体系
+6. 避免 Markdown 表格、代码块、ASCII 图示和外围弱相关材料
 7. 不要输出“信息已经足够”“我来回答”等检索过程性句子，直接给答案
 """
 
@@ -229,6 +229,24 @@ class LegalAgent:
     def _normalize_answer_refs(self, answer: str) -> str:
         """Repair common citation bracket slips so the frontend can hyperlink."""
         text = str(answer or "")
+        text = re.sub(
+            r"^\s*(好的[，,。]?\s*)?(?:现在|下面|接下来)?\s*"
+            r"(?:信息|材料|检索结果|证据)(?:已经|已)?(?:非常)?(?:充分|足够|完整)"
+            r"[，,。]?\s*(?:可以|能够)?(?:给出|作出)?(?:完整|准确|最终)?(?:准确)?"
+            r"(?:的)?(?:回答|答案|结论)了?[。:：]?\s*",
+            "",
+            text,
+            flags=re.S,
+        )
+        text = re.sub(
+            r"^\s*(好的[，,。]?\s*)?(?:信息|材料|检索结果|证据)(?:已经|已)?(?:非常)?"
+            r"(?:充分|足够|完整).*?(?:现在|下面|接下来)?(?:来)?回答[。:：]?\s*",
+            "",
+            text,
+            flags=re.S,
+        )
+        text = re.sub(r"^\s*(好的[，,。]?\s*)?(?:现在|下面|接下来)(?:来)?回答[。:：]?\s*", "", text)
+        text = re.sub(r"^\s*---+\s*", "", text)
         text = re.sub(r"\[\[([^\]\n]{1,260}?)[】］](?!\])", r"[[\1]]", text)
         text = re.sub(r"\[\[\s*law_id\s*=\s*(\d+)\s*\|", r"[[\1|", text)
         return re.sub(
@@ -420,7 +438,7 @@ class LegalAgent:
         tool_calls  : list  — log of all tool calls and their outputs
         messages    : list  — full message history (for debugging)
         """
-        if os.getenv("AGENT_TOOL_LOOP", "0") != "1":
+        if os.getenv("AGENT_BOUNDED", "0") == "1":
             return self._run_bounded(question, verbose=verbose)
 
         messages: list[dict] = [
@@ -466,7 +484,7 @@ class LegalAgent:
                 if verbose:
                     logger.info("  → %s(%s)", tool_name, tool_args[:120])
 
-                if idx >= MAX_TOOL_CALLS_PER_ROUND:
+                if MAX_TOOL_CALLS_PER_ROUND > 0 and idx >= MAX_TOOL_CALLS_PER_ROUND:
                     output = (
                         "【工具调用已跳过】本轮已达到工具调用上限；请先基于已返回的核心法条作答，"
                         "只有信息明显不足时再发起下一轮更精确的检索。"
@@ -498,7 +516,7 @@ class LegalAgent:
         # ---- MAX_ROUNDS reached: force a final synthesis ----
         logger.warning("MAX_ROUNDS (%d) reached; forcing final synthesis.", MAX_ROUNDS)
         messages.append({"role": "user", "content": _FORCE_FINAL_PROMPT})
-        response = self._chat(messages, tools=None, max_tokens=2048)  # no tools → must answer
+        response = self._chat(messages, tools=None, max_tokens=3072)  # no tools → must answer
         answer = response["choices"][0]["message"].get("content") or ""
         answer = self._normalize_answer_refs(answer)
         messages.append(response["choices"][0]["message"])
