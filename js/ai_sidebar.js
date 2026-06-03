@@ -13,6 +13,7 @@
   // ---------------------------------------------------------------------------
   var _lawMapLoaded = false;
   var _lawNameToId = {}; // full/short law name → law_id
+  var _lawIdToName = {}; // law_id → canonical full name
   var _lawAutoLinkRe = null; // compiled regex for auto-linking
 
   function _buildLawAutoLinkRegex() {
@@ -48,6 +49,7 @@
       .then(function (map) {
         Object.keys(map).forEach(function (id) {
           var name = map[id];
+          _lawIdToName[id] = name;
           _lawNameToId[name] = _lawNameToId[name] || id;
           // Short form without 中华人民共和国 prefix
           var short = name.replace(/^中华人民共和国/, "");
@@ -58,6 +60,9 @@
           var bare = name.replace(/（\d{4}(?:修订|修正|修改)?）$/, "");
           if (bare && bare !== name) {
             _lawNameToId[bare] = _lawNameToId[bare] || id;
+          }
+          if (name.indexOf("征求意见稿") !== -1) {
+            _lawNameToId["征求意见稿"] = _lawNameToId["征求意见稿"] || id;
           }
         });
         _buildLawAutoLinkRegex();
@@ -1193,9 +1198,10 @@
       return this.escapeHtml([lawName, articleNum].join(" ").trim());
     }
     var full = lawName + " " + articleNum;
+    var displayName = _lawIdToName[lawId] || lawName;
     var label =
       "《" +
-      lawName.replace(/^中华人民共和国/, "中华人民共和国") +
+      displayName.replace(/^中华人民共和国/, "中华人民共和国") +
       "》" +
       articleNum;
     if (annotation) label += "【" + annotation + "】";
