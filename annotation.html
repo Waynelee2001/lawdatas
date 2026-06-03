@@ -5037,7 +5037,7 @@
         var BASE_URL = (
             window.APP_BACKEND_BASE_URL ||
             window.BASE_URL ||
-            (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost'
+            (window.location.protocol === 'file:' || window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost'
                 ? 'http://127.0.0.1:5100'
                 : window.location.origin)
         ).replace(/\/$/, '');
@@ -5332,7 +5332,7 @@
             });
         }
     </script>
-    <script src="js/ai_sidebar.js?v=9"></script>
+    <script src="js/ai_sidebar.js?v=10"></script>
 </body>
 
 </html>

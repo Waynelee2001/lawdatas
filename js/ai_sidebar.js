@@ -932,6 +932,7 @@
     var configured = window.APP_BACKEND_BASE_URL || window.BASE_URL;
     if (configured) return String(configured).replace(/\/$/, "");
     if (
+      window.location.protocol === "file:" ||
       window.location.hostname === "127.0.0.1" ||
       window.location.hostname === "localhost"
     ) {
