@@ -315,6 +315,89 @@ class LegalAgent:
             label += f"【{annotation}】"
         return label
 
+    def _auto_link_known_refs(self, answer: str, messages: list[dict]) -> str:
+        """
+        Convert bare full-name law references into frontend link placeholders.
+
+        The model sometimes follows the legal wording but forgets the [[...]]
+        wrapper, e.g. 《中华人民共和国刑事诉讼法》第五十六条.  Tool outputs
+        already contain the trusted law_id/law_name/article_num triples, so we
+        can safely link exact full-name references without guessing ids.
+        """
+        text = str(answer or "")
+        refs = self._extract_known_refs(messages)
+        if not refs:
+            return text
+
+        for ref in sorted(
+            refs,
+            key=lambda item: len(item["law_name"]) + len(item["article_num"]),
+            reverse=True,
+        ):
+            law_id = ref["law_id"]
+            law_name = ref["law_name"]
+            article_num = ref["article_num"]
+            annotation = ref.get("annotation", "")
+            placeholder = f"[[{law_id}|{law_name}|{article_num}|{annotation}]]"
+            variants = [
+                f"《{law_name}》{article_num}",
+                f"《{law_name}》 {article_num}",
+                f"{law_name}{article_num}",
+                f"{law_name} {article_num}",
+            ]
+            for variant in variants:
+                if variant and variant in text and placeholder not in text:
+                    text = text.replace(variant, placeholder)
+        return self._normalize_answer_refs(text)
+
+    def _extract_known_refs(self, messages: list[dict]) -> list[dict[str, str]]:
+        article_re = (
+            r"第[一二三四五六七八九十百千万亿零〇○0-9]+条"
+            r"(?:之[一二三四五六七八九十百千万亿零〇○0-9]+)?"
+        )
+        refs: dict[tuple[str, str, str], dict[str, str]] = {}
+        for message in messages:
+            if message.get("role") != "tool":
+                continue
+            content = str(message.get("content") or "")
+            for match in re.finditer(
+                rf"law_id=(\d+)\s+(.+?)\s+({article_re})(?=\s|$|【)",
+                content,
+            ):
+                law_id, law_name, article_num = (
+                    match.group(1).strip(),
+                    match.group(2).strip(),
+                    match.group(3).strip(),
+                )
+                refs.setdefault(
+                    (law_id, law_name, article_num),
+                    {
+                        "law_id": law_id,
+                        "law_name": law_name,
+                        "article_num": article_num,
+                        "annotation": "",
+                    },
+                )
+            for match in re.finditer(
+                rf"【([^】\n]+)】({article_re})\s*\nlaw_id=(\d+)",
+                content,
+            ):
+                law_name, article_num, law_id = (
+                    match.group(1).strip(),
+                    match.group(2).strip(),
+                    match.group(3).strip(),
+                )
+                refs.setdefault(
+                    (law_id, law_name, article_num),
+                    {
+                        "law_id": law_id,
+                        "law_name": law_name,
+                        "article_num": article_num,
+                        "annotation": "",
+                    },
+                )
+        return list(refs.values())
+
     @staticmethod
     def _is_linkable_article_num(article_num: str) -> bool:
         return bool(
@@ -536,6 +619,7 @@ class LegalAgent:
                 # Plain-text response → final answer
                 answer = message.get("content") or ""
                 answer = self._normalize_answer_refs(answer)
+                answer = self._auto_link_known_refs(answer, messages)
                 if verbose:
                     logger.info("Agent finished in %d round(s).", rounds)
                 return {
@@ -606,6 +690,7 @@ class LegalAgent:
         response = self._chat(messages, tools=None, max_tokens=3072)  # no tools → must answer
         answer = response["choices"][0]["message"].get("content") or ""
         answer = self._normalize_answer_refs(answer)
+        answer = self._auto_link_known_refs(answer, messages)
         messages.append(response["choices"][0]["message"])
 
         return {
