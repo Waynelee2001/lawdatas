@@ -26,6 +26,7 @@ Tools available (defined in agent_tools.py)
 
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -33,7 +34,9 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-MAX_ROUNDS = 7  # hard cap on tool-call rounds
+MAX_ROUNDS = 5  # hard cap on tool-call rounds
+MAX_TOOL_CALLS_PER_ROUND = 4
+TOOL_HISTORY_MAX_CHARS = 2400
 REQUEST_TIMEOUT = 90.0  # seconds per DeepSeek call
 
 # ---------------------------------------------------------------------------
@@ -43,27 +46,26 @@ REQUEST_TIMEOUT = 90.0  # seconds per DeepSeek call
 _SYSTEM_PROMPT = """\
 你是专业的法考（中国法律职业资格考试）辅导助手，拥有完整的中国法律法条库检索能力。
 
-## 检索策略（必须遵守，至少完成前三步）
+## 检索策略（优先保证准确和稳定）
 
 **第一步：broad search（必做）**
-用 hybrid_search 做初步检索，top_k=10，找到核心法条及相关法条。
+用 hybrid_search 做初步检索，top_k=8，找到核心法条及相关法条。
 
-**第二步：drill down - 反向引用（必做）**
-对命中的每一个核心法条，立刻用 get_citing_articles 查反向引用。
-这是找司法解释、实施规定的唯一可靠途径。
-例如找到民法典第X条 → 必须查"哪些法条引用了它" → 获得所有参照适用的司法解释。
+**第二步：drill down - 反向引用（按需）**
+只有当问题涉及司法解释、程序衔接、例外细化，或 hybrid_search 未直接命中配套规定时，
+才对最重要的 1-3 条核心法条用 get_citing_articles 查反向引用。
 
 **第三步：read full text（必做）**
-对最重要的 2-4 条法条，用 get_article 读完整正文，确认细节和引用关系。
+对最重要的 2-3 条法条，用 get_article 读完整正文，确认细节和引用关系。
 
 **第四步：补充检索（建议）**
 如覆盖不完整，再做一次 hybrid_search 或 lightrag_query（mode="mix"）。
 
-复杂体系性问题应完成 4-6 轮工具调用，不要在信息不足时就草草作答。
+复杂体系性问题通常控制在 3-5 轮工具调用内；不要为了穷尽外围材料而拖慢回答。
 
 ## 工具选用场景
-- hybrid_search：初步检索、补充检索，top_k 设为 10
-- get_citing_articles：核心法条 → 司法解释（每个核心法条都必须查一次！）
+- hybrid_search：初步检索、补充检索，top_k 通常设为 8
+- get_citing_articles：核心法条 → 司法解释（只查最关键的 1-3 条）
 - get_article：读完整条文，获取引用关系
 - get_cited_articles：追溯某条引用的上位法依据
 - lightrag_query：体系性综述，mode="mix" 或 "global"
@@ -88,8 +90,8 @@ _SYSTEM_PROMPT = """\
 ## 回答要求
 - 先给出明确结论，再展开要件/情形分析
 - 法条引用嵌入分析句子内部（不要单列法条清单）
-- 覆盖完整：主要规定、司法解释细化、例外情形、程序衔接
-- 内容全面，宁多勿少，确保重要司法解释都被列出
+- 覆盖主要规定、重要司法解释细化、例外情形、程序衔接
+- 内容完整但克制，优先列核心规则；不要堆砌外围弱相关条文
 - 适合法考备考场景，条理清晰
 - 所有条号必须来自工具检索结果，不得凭记忆填写
 """
@@ -102,7 +104,7 @@ _FORCE_FINAL_PROMPT = """\
 2. 凡是提到法律条文，无论核心还是顺带，都必须用 [[...]] 格式，禁止裸文本引用
 3. 区分：主要依据（核心法条）/ 司法解释细化 / 例外情形 / 程序衔接
 4. 先给结论，后展开分析，覆盖所有重要法条和司法解释
-5. 内容宁多勿少，确保法考复习所需的完整体系都被呈现
+5. 内容完整但克制，优先呈现法考复习最需要的核心体系
 """
 
 
@@ -188,6 +190,21 @@ class LegalAgent:
             logger.exception("Tool %r raised an exception", name)
             return f"【工具执行错误 ({name})】{exc}"
 
+    def _compact_tool_output(self, output: str) -> str:
+        """Keep tool context small enough for Render Free and fast LLM turns."""
+        text = str(output or "")
+        if len(text) <= TOOL_HISTORY_MAX_CHARS:
+            return text
+        return (
+            text[:TOOL_HISTORY_MAX_CHARS]
+            + "\n\n【提示】以上工具结果已截断；请基于已给出的 law_id、法名、条号、考点和正文节选作答。"
+        )
+
+    def _normalize_answer_refs(self, answer: str) -> str:
+        """Repair common citation bracket slips so the frontend can hyperlink."""
+        text = str(answer or "")
+        return re.sub(r"\[\[([^\]\n]{1,260}?)[】］](?!\])", r"[[\1]]", text)
+
     # ------------------------------------------------------------------
     # Main entry point
     # ------------------------------------------------------------------
@@ -232,6 +249,7 @@ class LegalAgent:
             if not tool_calls:
                 # Plain-text response → final answer
                 answer = message.get("content") or ""
+                answer = self._normalize_answer_refs(answer)
                 if verbose:
                     logger.info("Agent finished in %d round(s).", rounds)
                 return {
@@ -242,7 +260,7 @@ class LegalAgent:
                 }
 
             # ---- Execute each tool call ----
-            for tc in tool_calls:
+            for idx, tc in enumerate(tool_calls):
                 tool_name = tc["function"]["name"]
                 tool_args = tc["function"].get("arguments", "{}")
                 tool_call_id = tc["id"]
@@ -250,7 +268,14 @@ class LegalAgent:
                 if verbose:
                     logger.info("  → %s(%s)", tool_name, tool_args[:120])
 
-                output = self._execute_tool(tool_name, tool_args)
+                if idx >= MAX_TOOL_CALLS_PER_ROUND:
+                    output = (
+                        "【工具调用已跳过】本轮已达到工具调用上限；请先基于已返回的核心法条作答，"
+                        "只有信息明显不足时再发起下一轮更精确的检索。"
+                    )
+                else:
+                    output = self._execute_tool(tool_name, tool_args)
+                compact_output = self._compact_tool_output(output)
 
                 tool_call_log.append(
                     {
@@ -258,6 +283,8 @@ class LegalAgent:
                         "tool": tool_name,
                         "args": tool_args,
                         "output_preview": output[:300],
+                        "output_chars": len(output),
+                        "history_chars": len(compact_output),
                     }
                 )
 
@@ -266,7 +293,7 @@ class LegalAgent:
                     {
                         "role": "tool",
                         "tool_call_id": tool_call_id,
-                        "content": output,
+                        "content": compact_output,
                     }
                 )
 
@@ -275,6 +302,7 @@ class LegalAgent:
         messages.append({"role": "user", "content": _FORCE_FINAL_PROMPT})
         response = self._chat(messages, tools=None)  # no tools → must answer
         answer = response["choices"][0]["message"].get("content") or ""
+        answer = self._normalize_answer_refs(answer)
         messages.append(response["choices"][0]["message"])
 
         return {
