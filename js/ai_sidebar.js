@@ -1248,11 +1248,16 @@
         if (i < lines.length) i++;
         if (lang === "mermaid") {
           var mermaidId = "aiMermaid_" + Date.now() + "_" + this._mermaidSeq++;
+          var mermaidText = this.restoreLawRefTokens(
+            codeLines.join("\n").trim(),
+            tokenMap,
+            true,
+          );
           html.push(
             '<div class="ai-mermaid-wrap"><div class="ai-mermaid" id="' +
               this.escapeAttr(mermaidId) +
               '">' +
-              this.escapeHtml(codeLines.join("\n").trim()) +
+              this.escapeHtml(mermaidText) +
               "</div></div>",
           );
           this.scheduleMermaidRender();
@@ -1346,7 +1351,7 @@
           "</p>",
       );
     }
-    return html.join("");
+    return this.restoreLawRefTokens(html.join(""), tokenMap, false);
   };
 
   AISidebar.prototype.renderInlineMarkdown = function (text, tokenMap) {
@@ -1372,6 +1377,28 @@
       html = html.split(token).join(tokenMap[token]);
     });
     return html;
+  };
+
+  AISidebar.prototype.restoreLawRefTokens = function (text, tokenMap, plain) {
+    var result = String(text || "");
+    Object.keys(tokenMap || {}).forEach(
+      function (token) {
+        var value = tokenMap[token] || "";
+        if (plain) value = this.htmlToPlainText(value);
+        result = result.split(token).join(value);
+      }.bind(this),
+    );
+    return result;
+  };
+
+  AISidebar.prototype.htmlToPlainText = function (html) {
+    return String(html || "")
+      .replace(/<[^>]*>/g, "")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&");
   };
 
   AISidebar.prototype.isMarkdownTable = function (lines, index) {
