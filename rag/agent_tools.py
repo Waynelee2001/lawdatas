@@ -9,6 +9,7 @@ easy to test independently and easy to wrap as Function-Calling tool calls.
 
 Tools
 -----
+knowledge_graph_search – default staged retrieval: hybrid seeds + graph paths
 hybrid_search          – BM25 + vector + graph expansion (existing pipeline)
 lightrag_query         – LightRAG local / mix / global retrieval
 get_article            – exact full-text lookup by law name keyword + article num
@@ -18,9 +19,241 @@ get_cited_articles     – which articles a given article cites (outgoing)
 
 import json
 import logging
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Tool 0 — knowledge_graph_search
+# ---------------------------------------------------------------------------
+
+
+_QUERY_TERM_RE = re.compile(r"[A-Za-z0-9]+|[\u4e00-\u9fff]{2,}")
+
+
+def _extract_graph_query_terms(query: str) -> list[str]:
+    stop_words = {
+        "什么",
+        "哪些",
+        "如何",
+        "怎么",
+        "规定",
+        "法律",
+        "法条",
+        "相关",
+        "可以",
+        "是否",
+        "这个",
+        "那个",
+        "中的",
+        "以及",
+    }
+    seen: set[str] = set()
+    terms: list[str] = []
+    for match in _QUERY_TERM_RE.findall(query or ""):
+        term = match.strip()
+        if len(term) < 2 or term in stop_words or term in seen:
+            continue
+        seen.add(term)
+        terms.append(term)
+    return terms[:12]
+
+
+def _article_query_score(article: Any, query_terms: list[str]) -> float:
+    text = " ".join(
+        [
+            getattr(article, "law_name", ""),
+            getattr(article, "article_num", ""),
+            getattr(article, "annotation", ""),
+            getattr(article, "chapter", ""),
+            getattr(article, "chapter_annotation", ""),
+            getattr(article, "article_text", "")[:260],
+        ]
+    )
+    score = 0.0
+    for term in query_terms:
+        if term and term in text:
+            score += 1.0
+            if term in getattr(article, "annotation", ""):
+                score += 0.6
+            if term in getattr(article, "law_name", ""):
+                score += 0.4
+    name = getattr(article, "law_name", "")
+    if name.startswith("最高人民法院") or "解释" in name or "规定" in name:
+        score += 0.8
+    if name.startswith("中华人民共和国"):
+        score += 0.4
+    return score
+
+
+def _edge_direction_label(direction: str) -> str:
+    return "本条引用" if direction == "outgoing" else "引用本条"
+
+
+def _rank_graph_edges(
+    edges: list[tuple[str, dict[str, Any], Any]],
+    query_terms: list[str],
+) -> list[tuple[str, dict[str, Any], Any]]:
+    def rank(item: tuple[str, dict[str, Any], Any]) -> tuple[float, str, str]:
+        direction, _edge, article = item
+        score = _article_query_score(article, query_terms)
+        if direction == "incoming":
+            score += 0.25
+        return (-score, article.law_name, article.article_num)
+
+    return sorted(edges, key=rank)
+
+
+def knowledge_graph_search(
+    query: str,
+    seed_top_k: int = 10,
+    graph_depth: int = 2,
+    graph_expand_k: int = 4,
+    law_name_filter: str | None = None,
+) -> str:
+    """
+    Default Agent retrieval step.
+
+    It first uses the existing hybrid retriever to locate core statutes by
+    keyword + vector + BM25 signals, then deterministically walks the citation
+    graph around those core articles.  Depth 1 normally finds judicial
+    interpretations and implementing provisions that cite the seed article;
+    depth 2 follows those interpretation nodes to their connected provisions.
+    """
+    try:
+        import json as _json
+
+        from rag.config import settings
+        from rag.loader import build_article_lookup
+        from rag.service import run_rag_query
+
+        seed_top_k = min(max(4, int(seed_top_k or 10)), 12)
+        graph_depth = min(max(1, int(graph_depth or 2)), 3)
+        graph_expand_k = min(max(1, int(graph_expand_k or 4)), 8)
+
+        law_ids: set[str] | None = None
+        if law_name_filter:
+            law_map: dict[str, str] = _json.loads(
+                settings.law_map_path.read_text(encoding="utf-8")
+            )
+            matched = {
+                lid for lid, lname in law_map.items() if law_name_filter in lname
+            }
+            law_ids = matched or None
+
+        rag_data = run_rag_query(
+            query,
+            top_k=seed_top_k,
+            graph_expand_k=graph_expand_k,
+            law_ids=law_ids,
+            compress=False,
+            use_llm_analysis=False,
+        )
+        lookup = build_article_lookup(law_ids=law_ids)
+        query_terms = _extract_graph_query_terms(query)
+
+        lines: list[str] = [
+            "【knowledge_graph_search 结果】",
+            f"问题核心关键词：{', '.join(query_terms) if query_terms else query}",
+            (
+                "检索纪律：关键词+向量+BM25 定位核心条文；再按引用图谱追踪"
+                f" {graph_depth} 跳，优先保留与问题关键词重合的司法解释、程序规则和例外规则。"
+            ),
+        ]
+        if law_name_filter:
+            lines.append(f"限定法律：{law_name_filter}")
+        lines.append("")
+        lines.append("【一、核心命中条文（用于正式依据，必须优先评估）】")
+
+        seed_business_ids: list[str] = []
+        for i, result in enumerate(rag_data.get("results", [])[:seed_top_k], 1):
+            business_id = str(result.get("business_id") or "").strip()
+            if business_id:
+                seed_business_ids.append(business_id)
+            reasons = ", ".join(sorted(result.get("reasons") or []))
+            lines.append(
+                f"[{i}] law_id={result['law_id']}  {result['law_name']} {result['article_num']}"
+            )
+            if result.get("annotation"):
+                lines.append(f"    考点：{result['annotation']}")
+            if reasons:
+                lines.append(f"    检索路径：{reasons}")
+            text_snippet = str(result.get("article_text") or "")[:180].replace("\n", " ")
+            if text_snippet and i <= 6:
+                lines.append(f"    正文节选：{text_snippet}…")
+            lines.append("")
+
+        lines.append("【二、围绕核心条文的知识图谱链路】")
+        seen_nodes: set[str] = set(seed_business_ids)
+        graph_seed_limit = min(seed_top_k, 6)
+        frontier = seed_business_ids[:graph_seed_limit]
+        total_edges = 0
+        max_total_edges = min(20, graph_seed_limit * graph_expand_k * graph_depth)
+
+        for depth in range(1, graph_depth + 1):
+            next_frontier: list[str] = []
+            depth_lines: list[str] = []
+            for source_business_id in frontier:
+                source = lookup.get(source_business_id)
+                if source is None:
+                    continue
+                edges: list[tuple[str, dict[str, Any], Any]] = []
+                for edge in source.outgoing_citations:
+                    target_id = edge.target_business_id
+                    target = lookup.get(target_id)
+                    if target is not None:
+                        edges.append(("outgoing", {"context": edge.context}, target))
+                for edge in source.incoming_citations:
+                    source_id = edge.source_business_id
+                    incoming = lookup.get(source_id)
+                    if incoming is not None:
+                        edges.append(("incoming", {"context": edge.context}, incoming))
+
+                for direction, edge_data, article in _rank_graph_edges(edges, query_terms)[
+                    :graph_expand_k
+                ]:
+                    if article.business_id in seen_nodes and depth > 1:
+                        continue
+                    seen_nodes.add(article.business_id)
+                    next_frontier.append(article.business_id)
+                    total_edges += 1
+                    annotation = f"【{article.annotation}】" if article.annotation else ""
+                    context = str(edge_data.get("context") or "").replace("\n", " ")
+                    context_part = f"；上下文：{context[:70]}…" if context else ""
+                    depth_lines.append(
+                        f"- 第{depth}跳：{source.law_name} {source.article_num}"
+                        f" → {_edge_direction_label(direction)} → "
+                        f"law_id={article.law_id}  {article.law_name} {article.article_num}"
+                        f"{annotation}{context_part}"
+                    )
+                    if total_edges >= max_total_edges:
+                        break
+                if total_edges >= max_total_edges:
+                    break
+            if depth_lines:
+                lines.append(f"【第{depth}跳关联】")
+                lines.extend(depth_lines)
+            frontier = next_frontier
+            if not frontier or total_edges >= max_total_edges:
+                break
+
+        if total_edges == 0:
+            lines.append("未发现可用的一跳/二跳引用链路；请主要依据核心命中条文作答。")
+
+        lines.append("")
+        lines.append("【三、回答使用建议】")
+        lines.append("- 先围绕用户问题核心作答，不要因为图谱中出现弱相关条文就展开。")
+        lines.append("- 核心依据优先使用第一部分；司法解释、配套规则、例外规则从第二部分中挑与问题直接相关者。")
+        lines.append("- 若仍缺少某条全文细节，再调用 get_article；若缺少某核心条的配套解释，再调用 get_citing_articles。")
+
+        return "\n".join(lines)
+
+    except Exception as exc:
+        logger.exception("knowledge_graph_search failed")
+        return f"【knowledge_graph_search 错误】{exc}"
+
 
 # ---------------------------------------------------------------------------
 # Tool 1 — hybrid_search
@@ -435,6 +668,7 @@ def get_cited_articles(
 # ---------------------------------------------------------------------------
 
 TOOL_FUNCTIONS: dict[str, Any] = {
+    "knowledge_graph_search": knowledge_graph_search,
     "hybrid_search": hybrid_search,
     "lightrag_query": lightrag_query,
     "get_article": get_article,
@@ -443,6 +677,46 @@ TOOL_FUNCTIONS: dict[str, Any] = {
 }
 
 TOOL_SCHEMAS: list[dict] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "knowledge_graph_search",
+            "description": (
+                "默认首选工具。先用关键词、BM25和向量检索定位核心条文，"
+                "再沿引用知识图谱扩展司法解释、配套规定和其他关联法条。"
+                "适合绝大多数 Agent 深度检索问题。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "用户原始问题或提炼后的核心检索问题",
+                    },
+                    "seed_top_k": {
+                        "type": "integer",
+                        "description": "核心命中条文数量，默认10，通常用10",
+                        "default": 10,
+                    },
+                    "graph_depth": {
+                        "type": "integer",
+                        "description": "引用图谱扩展深度，默认2；复杂体系问题可用3",
+                        "default": 2,
+                    },
+                    "graph_expand_k": {
+                        "type": "integer",
+                        "description": "每个节点最多扩展几个关联节点，默认4",
+                        "default": 4,
+                    },
+                    "law_name_filter": {
+                        "type": "string",
+                        "description": "可选。限定在某部法律内检索，如民法典、刑事诉讼法",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {

@@ -17,6 +17,7 @@ The agent runs a tight loop (≤ MAX_ROUNDS iterations):
 
 Tools available (defined in agent_tools.py)
 -------------------------------------------
+  knowledge_graph_search  staged keyword/vector/BM25 + citation graph retrieval
   hybrid_search         BM25 + vector + graph expansion (fast, precise)
   lightrag_query        LightRAG graph-aware retrieval (comprehensive)
   get_article           Exact full-text lookup by law name + article number
@@ -38,7 +39,7 @@ logger = logging.getLogger(__name__)
 MAX_ROUNDS = int(os.getenv("AGENT_MAX_ROUNDS", "12"))
 MAX_TOOL_CALLS_PER_ROUND = int(os.getenv("AGENT_MAX_TOOL_CALLS_PER_ROUND", "0"))
 MAX_TOOL_CALLS_TOTAL = int(os.getenv("AGENT_MAX_TOOL_CALLS_TOTAL", "24"))
-TOOL_HISTORY_MAX_CHARS = int(os.getenv("AGENT_TOOL_HISTORY_MAX_CHARS", "3200"))
+TOOL_HISTORY_MAX_CHARS = int(os.getenv("AGENT_TOOL_HISTORY_MAX_CHARS", "6000"))
 CHAT_MAX_TOKENS = int(os.getenv("AGENT_CHAT_MAX_TOKENS", "3072"))
 REQUEST_TIMEOUT = 90.0  # seconds per LLM call
 
@@ -49,24 +50,43 @@ REQUEST_TIMEOUT = 90.0  # seconds per LLM call
 _SYSTEM_PROMPT = """\
 你是专业的法考（中国法律职业资格考试）辅导助手，拥有完整的中国法律法条库检索能力。
 
-## 检索策略（质量优先）
+## 检索策略（Agent 保持深度，但必须围绕问题核心）
 
-**第一步：broad search（必做）**
-用 hybrid_search 做初步检索，top_k=10，找到核心法条及相关法条。
+**第零步：先在心里分析问题核心（必做，不要输出过程）**
+识别用户真正问的是：核心制度/构成要件/程序阶段/例外规则/司法解释细化/对比辨析中的哪一种。
+后续每次工具调用都必须能回答一个明确缺口；如果只是“可能相关”，不要继续查。
 
-**第二步：drill down - 反向引用（按需）**
-只有当问题涉及司法解释、程序衔接、例外细化，或 hybrid_search 未直接命中配套规定时，
-对重要核心法条用 get_citing_articles 查反向引用。
+**第一步：知识图谱优先检索（必做，默认首选）**
+用 knowledge_graph_search 做首轮检索：
+- seed_top_k=10
+- graph_depth=2
+- graph_expand_k=4
 
-**第三步：read full text（必做）**
-对重要法条，用 get_article 读完整正文，确认细节和引用关系。
+这个工具会先用关键词、BM25、向量定位核心条文，再沿引用图谱查：
+核心条文 → 关联司法解释/配套规定 → 司法解释再关联的其他法条。
+一般问题首轮结果足够时，直接综合作答。
 
-**第四步：补充检索（建议）**
-如覆盖不完整，再做一次 hybrid_search 或 lightrag_query（mode="mix"）。
+**第二步：覆盖检查（每次补查前必做）**
+检查首轮图谱是否已经覆盖：
+1. 基本法律的核心条文
+2. 主要司法解释或配套规范
+3. 重要例外/排除/程序衔接
+4. 与用户问题直接相关的场景关键词
 
-复杂体系性问题可以继续检索到依据充分为止，但不要堆砌明显弱相关材料。
+若以上核心覆盖已经够，不要继续调用工具，直接作答。
+
+**第三步：定向深挖（按缺口使用，不是漫游）**
+- 缺少某条完整规范含义：get_article；通常只读最关键的 2-5 条，不要机械读取首轮所有候选
+- 缺少“谁细化/参照适用此条”：get_citing_articles
+- 缺少“该解释指向哪些上位依据”：get_cited_articles
+- 首轮核心命中明显偏离：再用 hybrid_search 换关键词补检索
+- 体系性、宏观概念仍不清楚：才用 lightrag_query
+
+复杂体系性问题可以继续深挖，但每一轮必须围绕用户问题核心收敛；
+一旦发现后续材料与问题核心相关性下降，应停止检索并综合作答。
 
 ## 工具选用场景
+- knowledge_graph_search：默认首轮工具，关键词+向量+BM25+引用知识图谱扩展
 - hybrid_search：初步检索、补充检索，top_k 通常设为 8-10
 - get_citing_articles：核心法条 → 司法解释和配套规定
 - get_article：读完整条文，获取引用关系
@@ -117,6 +137,7 @@ _FORCE_FINAL_PROMPT = """\
 8. 禁止普通代码块和 ASCII 图示；如确需图示，只能输出以 ```mermaid 开头的 Mermaid 图
 9. 不要输出“信息已经足够”“我来回答”等检索过程性句子，直接给答案
 10. 如果已经覆盖核心基本法条、主要司法解释/配套规范和程序衔接，应立即综合作答，不要继续穷尽外围条款
+11. 围绕用户问题核心取舍材料；图谱中弱相关、远相关节点不得展开
 """
 
 _BOUNDED_FINAL_PROMPT = """\
@@ -343,7 +364,7 @@ class LegalAgent:
         results = self._prioritize_bounded_results(
             str(rag_data.get("query", "") or ""), rag_data.get("results", []) or []
         )
-        for i, item in enumerate(results[:6], 1):
+        for i, item in enumerate(results[:10], 1):
             law_id = str(item.get("law_id", "")).strip()
             law_name = str(item.get("law_name", "")).strip()
             article_num = str(item.get("article_num", "")).strip()
@@ -358,7 +379,7 @@ class LegalAgent:
             if reasons:
                 lines.append(f"    检索路径：{reasons}")
             if article_text:
-                lines.append(f"    正文：{article_text[:520]}")
+                lines.append(f"    正文：{article_text[:360]}")
             incoming = item.get("incoming_citations", []) or []
             if incoming:
                 snippets = []
@@ -417,7 +438,7 @@ class LegalAgent:
         rag_data = run_rag_query(
             question,
             top_k=10,
-            graph_expand_k=3,
+            graph_expand_k=4,
             compress=False,
             use_llm_analysis=False,
         )
@@ -427,7 +448,7 @@ class LegalAgent:
                 "round": 1,
                 "tool": "bounded_hybrid_search",
                 "args": json.dumps(
-                    {"query": question, "top_k": 10, "graph_expand_k": 3},
+                    {"query": question, "top_k": 10, "graph_expand_k": 4},
                     ensure_ascii=False,
                 ),
                 "output_preview": context[:300],
@@ -529,7 +550,15 @@ class LegalAgent:
                 if verbose:
                     logger.info("  → %s(%s)", tool_name, tool_args[:120])
 
-                if MAX_TOOL_CALLS_PER_ROUND > 0 and idx >= MAX_TOOL_CALLS_PER_ROUND:
+                if (
+                    MAX_TOOL_CALLS_TOTAL > 0
+                    and len(tool_call_log) >= MAX_TOOL_CALLS_TOTAL
+                ):
+                    output = (
+                        "【工具调用已跳过】已达到本次检索的工具调用总量保护线；"
+                        "请基于已返回的核心法条和图谱链路作答。"
+                    )
+                elif MAX_TOOL_CALLS_PER_ROUND > 0 and idx >= MAX_TOOL_CALLS_PER_ROUND:
                     output = (
                         "【工具调用已跳过】本轮已达到工具调用上限；请先基于已返回的核心法条作答，"
                         "只有信息明显不足时再发起下一轮更精确的检索。"
