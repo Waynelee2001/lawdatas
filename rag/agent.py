@@ -208,7 +208,12 @@ class LegalAgent:
     def _normalize_answer_refs(self, answer: str) -> str:
         """Repair common citation bracket slips so the frontend can hyperlink."""
         text = str(answer or "")
-        return re.sub(r"\[\[([^\]\n]{1,260}?)[】］](?!\])", r"[[\1]]", text)
+        text = re.sub(r"\[\[([^\]\n]{1,260}?)[】］](?!\])", r"[[\1]]", text)
+        return re.sub(
+            r"\[\[([^|\]\n]+)\|([^|\]\n]+)\|([^|\]\n]+)\]\]",
+            r"[[\1|\2|\3|]]",
+            text,
+        )
 
     # ------------------------------------------------------------------
     # Main entry point
