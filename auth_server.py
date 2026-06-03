@@ -1,5 +1,4 @@
 import datetime
-from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import hmac
 import json
@@ -9,7 +8,6 @@ import os
 import secrets
 import subprocess
 import sys
-import threading
 import time
 import uuid
 from pathlib import Path
@@ -27,12 +25,8 @@ CORS(app)
 # Serverless defaults to /tmp; persistent hosts can mount these paths to a disk.
 DB_FILE = os.environ.get("USERS_DB_FILE", "/tmp/users.json")
 CODES_FILE = os.environ.get("CODES_DB_FILE", "/tmp/codes.json")
-AGENT_JOB_WORKERS = int(os.environ.get("AGENT_JOB_WORKERS", "2"))
-AGENT_JOB_TTL_SECONDS = int(os.environ.get("AGENT_JOB_TTL_SECONDS", "1800"))
-
-_agent_executor = ThreadPoolExecutor(max_workers=max(1, AGENT_JOB_WORKERS))
-_agent_jobs: dict[str, dict] = {}
-_agent_jobs_lock = threading.Lock()
+AGENT_JOB_DIR = Path(os.environ.get("AGENT_JOB_DIR", "/tmp/law_agent_jobs"))
+AGENT_JOB_TTL_SECONDS = int(os.environ.get("AGENT_JOB_TTL_SECONDS", "7200"))
 
 # ============================================================
 # 核心密钥 —— 请勿泄露！
@@ -359,82 +353,130 @@ def _run_agent_query_sync(question: str, verbose: bool = False) -> dict:
 def _trim_agent_jobs(now: float | None = None) -> None:
     now = now or time.time()
     cutoff = now - AGENT_JOB_TTL_SECONDS
-    with _agent_jobs_lock:
-        stale_ids = [
-            job_id
-            for job_id, job in _agent_jobs.items()
-            if float(job.get("updated_at", job.get("created_at", now))) < cutoff
-        ]
-        for job_id in stale_ids:
-            _agent_jobs.pop(job_id, None)
+    AGENT_JOB_DIR.mkdir(parents=True, exist_ok=True)
+    for path in AGENT_JOB_DIR.glob("*.json"):
+        if path.name.endswith(".question.json"):
+            continue
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink(missing_ok=True)
+                question_path = path.with_suffix(".question.json")
+                question_path.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+
+def _safe_agent_job_id(job_id: str) -> str:
+    safe = "".join(ch for ch in str(job_id or "") if ch.isalnum() or ch in "-_")
+    return safe if safe == str(job_id or "") and safe else ""
+
+
+def _agent_job_path(job_id: str) -> Path | None:
+    safe = _safe_agent_job_id(job_id)
+    if not safe:
+        return None
+    return AGENT_JOB_DIR / f"{safe}.json"
+
+
+def _write_agent_job(job_id: str, payload: dict) -> None:
+    AGENT_JOB_DIR.mkdir(parents=True, exist_ok=True)
+    path = _agent_job_path(job_id)
+    if path is None:
+        raise ValueError("invalid job id")
+    tmp_path = path.with_suffix(".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+    os.replace(tmp_path, path)
+
+
+def _read_agent_job(job_id: str) -> dict | None:
+    path = _agent_job_path(job_id)
+    if path is None or not path.exists():
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _pid_alive(pid: int | None) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except OSError:
+        return False
 
 
 def _agent_job_snapshot(job_id: str) -> dict | None:
-    with _agent_jobs_lock:
-        job = _agent_jobs.get(job_id)
-        if not job:
-            return None
-        payload = dict(job)
+    payload = _read_agent_job(job_id)
+    if not payload:
+        return None
     payload["job_id"] = job_id
+    if payload.get("status") in {"queued", "running"} and not _pid_alive(
+        payload.get("pid")
+    ):
+        payload["status"] = "error"
+        payload["updated_at"] = time.time()
+        payload["error"] = "Agent 后台任务进程已退出，请重新发起查询。"
+        _write_agent_job(job_id, payload)
     started_at = payload.get("started_at") or payload.get("created_at")
     payload["elapsed_seconds"] = round(max(0.0, time.time() - float(started_at)), 1)
     return payload
-
-
-def _run_agent_job(job_id: str, question: str, verbose: bool) -> None:
-    with _agent_jobs_lock:
-        job = _agent_jobs.get(job_id)
-        if not job:
-            return
-        job.update(
-            {
-                "status": "running",
-                "started_at": time.time(),
-                "updated_at": time.time(),
-            }
-        )
-    try:
-        result = _run_agent_query_sync(question, verbose=verbose)
-        with _agent_jobs_lock:
-            job = _agent_jobs.get(job_id)
-            if job:
-                job.update(
-                    {
-                        "status": "done",
-                        "updated_at": time.time(),
-                        "result": {
-                            "answer": result.get("answer", ""),
-                            "rounds": result.get("rounds", 0),
-                            "tool_calls": result.get("tool_calls", []),
-                        },
-                    }
-                )
-    except Exception as exc:
-        logger.exception("agent background job failed: %s", job_id)
-        with _agent_jobs_lock:
-            job = _agent_jobs.get(job_id)
-            if job:
-                job.update(
-                    {
-                        "status": "error",
-                        "updated_at": time.time(),
-                        "error": f"Agent 查询失败: {str(exc)[:400]}",
-                    }
-                )
 
 
 def _start_agent_job(question: str, verbose: bool = False) -> str:
     _trim_agent_jobs()
     job_id = uuid.uuid4().hex
     now = time.time()
-    with _agent_jobs_lock:
-        _agent_jobs[job_id] = {
-            "status": "queued",
-            "question": question,
-            "created_at": now,
-            "updated_at": now,
-        }
-    _agent_executor.submit(_run_agent_job, job_id, question, verbose)
+    AGENT_JOB_DIR.mkdir(parents=True, exist_ok=True)
+    job_path = _agent_job_path(job_id)
+    if job_path is None:
+        raise ValueError("invalid job id")
+    question_path = job_path.with_suffix(".question.json")
+    with open(question_path, "w", encoding="utf-8") as f:
+        json.dump({"question": question, "verbose": verbose}, f, ensure_ascii=False)
+    payload = {
+        "status": "queued",
+        "question": question,
+        "created_at": now,
+        "updated_at": now,
+    }
+    _write_agent_job(job_id, payload)
+    try:
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "rag.agent_job_worker",
+                job_id,
+                str(job_path),
+                str(question_path),
+            ],
+            cwd=str(Path(__file__).resolve().parent),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        payload.update(
+            {
+                "status": "running",
+                "pid": proc.pid,
+                "started_at": time.time(),
+                "updated_at": time.time(),
+            }
+        )
+    except Exception as exc:
+        payload.update(
+            {
+                "status": "error",
+                "updated_at": time.time(),
+                "error": f"Agent 后台任务启动失败: {str(exc)[:400]}",
+            }
+        )
+    _write_agent_job(job_id, payload)
     return job_id
 
 
