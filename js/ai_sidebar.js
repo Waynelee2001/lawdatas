@@ -793,7 +793,7 @@
     var partial = "";
     assistantNode.classList.add("streaming");
 
-    for (var i = 0; i < chars.length; i += 10) {
+    for (var i = 0; i < chars.length; i += 6) {
       if (signal && signal.aborted) {
         throw new DOMException("Aborted", "AbortError");
       }
@@ -809,7 +809,7 @@
         includeDetails: false,
       });
       this.scrollChatToBottom();
-      await this.delay(18, signal);
+      await this.delay(24, signal);
     }
 
     assistantNode.classList.remove("streaming");
