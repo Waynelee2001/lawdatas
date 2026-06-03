@@ -126,7 +126,8 @@ _BOUNDED_FINAL_PROMPT = """\
 - 检索结果已经按优先级排列；[1] 通常是首要主依据，除非明显无关，必须首先使用 [1]
 - 若检索结果同时包含基本法律、司法解释和规范性文件，优先以基本法律条文作为主依据，再用司法解释/规范性文件细化
 - 优先覆盖核心规则、程序规则、重要例外和司法解释细化
-- 控制在 1000-1600 个中文字符，避免长表格和外围弱相关材料
+- 控制在 800-1200 个中文字符
+- 禁止使用 Markdown 表格、代码块、ASCII 图示或流程图；用短段落和项目符号表达
 - 不要输出检索过程性句子，直接给答案
 """
 
@@ -280,7 +281,7 @@ class LegalAgent:
         results = self._prioritize_bounded_results(
             str(rag_data.get("query", "") or ""), rag_data.get("results", []) or []
         )
-        for i, item in enumerate(results[:8], 1):
+        for i, item in enumerate(results[:6], 1):
             law_id = str(item.get("law_id", "")).strip()
             law_name = str(item.get("law_name", "")).strip()
             article_num = str(item.get("article_num", "")).strip()
@@ -295,7 +296,7 @@ class LegalAgent:
             if reasons:
                 lines.append(f"    检索路径：{reasons}")
             if article_text:
-                lines.append(f"    正文：{article_text[:700]}")
+                lines.append(f"    正文：{article_text[:520]}")
             incoming = item.get("incoming_citations", []) or []
             if incoming:
                 snippets = []
@@ -380,7 +381,7 @@ class LegalAgent:
             },
         ]
         try:
-            response = self._chat(messages, tools=None, max_tokens=1800, timeout=45.0)
+            response = self._chat(messages, tools=None, max_tokens=1200, timeout=45.0)
             answer = response["choices"][0]["message"].get("content") or ""
             answer = self._normalize_answer_refs(answer)
             answer = self._ensure_primary_ref(answer, rag_data)
