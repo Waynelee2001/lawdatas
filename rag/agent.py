@@ -119,7 +119,7 @@ _SYSTEM_PROMPT = """\
 - 覆盖主要规定、重要司法解释细化、例外情形、程序衔接
 - 内容完整，优先列核心规则和必要配套规定；不要堆砌外围弱相关条文
 - 可以使用 Markdown 标题、加粗、列表、引用和必要的短表格
-- 禁止普通代码块和 ASCII 图示；如确需体系图或流程图，只能输出以 ```mermaid 开头的 Mermaid 图，前端会渲染成图
+- 禁止普通代码块和 ASCII/字符画图示，答案中不得出现“┌ ┐ └ ┘ │ ─ ├ ┤ ┬ ┴ ┼ ▼ ▲”等方框、横线或箭头拼出来的图；如确需体系图或流程图，只能输出以 ```mermaid 开头的 Mermaid 图，前端会渲染成图
 - 不要输出“信息已经足够”“我来回答”等检索过程性句子，直接给答案
 - 适合法考备考场景，条理清晰
 - 所有条号必须来自工具检索结果，不得凭记忆填写
@@ -137,7 +137,7 @@ _FORCE_FINAL_PROMPT = """\
 6. 先给结论，后展开分析，覆盖所有重要法条和司法解释
 7. 内容完整，优先呈现法考复习最需要的核心体系
 8. 可以使用 Markdown 标题、加粗、列表、引用和必要的短表格
-9. 禁止普通代码块和 ASCII 图示；如确需图示，只能输出以 ```mermaid 开头的 Mermaid 图
+9. 禁止普通代码块和 ASCII/字符画图示，答案中不得出现“┌ ┐ └ ┘ │ ─ ├ ┤ ┬ ┴ ┼ ▼ ▲”等方框、横线或箭头拼出来的图；如确需图示，只能输出以 ```mermaid 开头的 Mermaid 图
 10. 不要输出“信息已经足够”“我来回答”等检索过程性句子，直接给答案
 11. 如果已经覆盖核心基本法条、主要司法解释/配套规范和程序衔接，应立即综合作答，不要继续穷尽外围条款
 12. 围绕用户问题核心取舍材料；图谱中弱相关、远相关节点不得展开
@@ -161,7 +161,7 @@ _BOUNDED_FINAL_PROMPT = """\
 - 优先覆盖核心规则、程序规则、重要例外和司法解释细化
 - 控制在 800-1200 个中文字符
 - 可以使用 Markdown 标题、加粗、列表、引用和必要的短表格
-- 禁止普通代码块和 ASCII 图示；如确需图示，只能输出以 ```mermaid 开头的 Mermaid 图
+- 禁止普通代码块和 ASCII/字符画图示，答案中不得出现“┌ ┐ └ ┘ │ ─ ├ ┤ ┬ ┴ ┼ ▼ ▲”等方框、横线或箭头拼出来的图；如确需图示，只能输出以 ```mermaid 开头的 Mermaid 图
 - 不要输出检索过程性句子，直接给答案
 """
 
@@ -299,11 +299,35 @@ class LegalAgent:
             r"[[\1|\2|\3|]]",
             text,
         )
-        return re.sub(
+        text = re.sub(
             r"\[\[(\d+)\|([^|\]\n]+)\|([^|\]\n]+)\|([^\]\n]*)\]\]",
             self._normalize_ref_placeholder,
             text,
         )
+        return self._strip_ascii_diagrams(text)
+
+    def _strip_ascii_diagrams(self, answer: str) -> str:
+        """Remove box-drawing diagrams that break the narrow AI sidebar."""
+        diagram_re = re.compile(r"[┌┐└┘├┤┬┴┼─━│┃▼▲]")
+        lines = str(answer or "").splitlines()
+        cleaned: list[str] = []
+        in_diagram = False
+        replacement = (
+            "体系关系：核心规则、出资义务和人格否认例外请以上文分点说明为准。"
+        )
+
+        for line in lines:
+            if diagram_re.search(line):
+                if not in_diagram:
+                    cleaned.append(replacement)
+                in_diagram = True
+                continue
+            if in_diagram and not line.strip():
+                continue
+            in_diagram = False
+            cleaned.append(line)
+
+        return re.sub(r"\n{3,}", "\n\n", "\n".join(cleaned)).strip()
 
     def _normalize_ref_placeholder(self, match: re.Match[str]) -> str:
         law_id = match.group(1).strip()
