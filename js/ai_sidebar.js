@@ -640,7 +640,7 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ question: question, verbose: false }),
     });
-    var payload = await response.json();
+    var payload = await this.parseJsonResponse(response, "Agent 查询失败");
     if (!response.ok || !payload || payload.code !== 200) {
       throw new Error((payload && payload.msg) || "Agent 查询失败");
     }
@@ -728,11 +728,30 @@
         compress: true,
       }),
     });
-    var payload = await response.json();
+    var payload = await this.parseJsonResponse(response, "RAG 查询失败");
     if (!response.ok || !payload || payload.code !== 200) {
       throw new Error((payload && payload.msg) || "RAG 查询失败");
     }
     return payload.data;
+  };
+
+  AISidebar.prototype.parseJsonResponse = async function (response, label) {
+    var text = await response.text();
+    if (!text || !text.trim()) {
+      throw new Error(label + "：后端未返回内容（HTTP " + response.status + "）");
+    }
+    try {
+      return JSON.parse(text);
+    } catch (error) {
+      var preview = text.replace(/\s+/g, " ").slice(0, 180);
+      throw new Error(
+        label +
+          "：后端返回了非 JSON 内容（HTTP " +
+          response.status +
+          "）" +
+          (preview ? "：" + preview : ""),
+      );
+    }
   };
 
   AISidebar.prototype.getBackendBaseUrl = function () {
