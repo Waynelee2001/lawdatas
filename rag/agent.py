@@ -39,7 +39,9 @@ logger = logging.getLogger(__name__)
 MAX_ROUNDS = int(os.getenv("AGENT_MAX_ROUNDS", "12"))
 MAX_TOOL_CALLS_PER_ROUND = int(os.getenv("AGENT_MAX_TOOL_CALLS_PER_ROUND", "0"))
 MAX_TOOL_CALLS_TOTAL = int(os.getenv("AGENT_MAX_TOOL_CALLS_TOTAL", "24"))
-TOOL_HISTORY_MAX_CHARS = int(os.getenv("AGENT_TOOL_HISTORY_MAX_CHARS", "8000"))
+# <= 0 means keep full tool outputs.  A positive value truncates unusually
+# large tool returns to protect slow/free deployments.
+TOOL_HISTORY_MAX_CHARS = int(os.getenv("AGENT_TOOL_HISTORY_MAX_CHARS", "0"))
 CHAT_MAX_TOKENS = int(os.getenv("AGENT_CHAT_MAX_TOKENS", "3072"))
 REQUEST_TIMEOUT = 90.0  # seconds per LLM call
 
@@ -249,6 +251,8 @@ class LegalAgent:
     def _compact_tool_output(self, output: str) -> str:
         """Keep tool context small enough for Render Free and fast LLM turns."""
         text = str(output or "")
+        if TOOL_HISTORY_MAX_CHARS <= 0:
+            return text
         if len(text) <= TOOL_HISTORY_MAX_CHARS:
             return text
         return (
