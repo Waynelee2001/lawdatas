@@ -26,6 +26,7 @@ Tools available (defined in agent_tools.py)
 
 import json
 import logging
+import os
 import re
 import time
 from typing import Any
@@ -111,6 +112,24 @@ _FORCE_FINAL_PROMPT = """\
 7. 不要输出“信息已经足够”“我来回答”等检索过程性句子，直接给答案
 """
 
+_BOUNDED_FINAL_PROMPT = """\
+你是专业的法考（中国法律职业资格考试）辅导助手。请只根据用户问题和给出的检索结果作答。
+
+法条引用格式：
+- 正式依据必须写成 [[law_id|法律名称|条号|标注]]
+- 第一个字段只能是数字，例如 [[13|中华人民共和国刑事诉讼法|第五十六条|非法证据排除]]；禁止写成 law_id=13
+- law_id、法律名称、条号必须从检索结果中复制，不得猜测
+- 如果只是概括说明但没有 law_id，不要写成裸条文依据
+
+回答要求：
+- 先给明确结论，再分点说明
+- 检索结果已经按优先级排列；[1] 通常是首要主依据，除非明显无关，必须首先使用 [1]
+- 若检索结果同时包含基本法律、司法解释和规范性文件，优先以基本法律条文作为主依据，再用司法解释/规范性文件细化
+- 优先覆盖核心规则、程序规则、重要例外和司法解释细化
+- 控制在 1000-1600 个中文字符，避免长表格和外围弱相关材料
+- 不要输出检索过程性句子，直接给答案
+"""
+
 
 # ---------------------------------------------------------------------------
 # Core agent class
@@ -154,6 +173,7 @@ class LegalAgent:
         messages: list[dict],
         tools: list[dict] | None = None,
         max_tokens: int | None = None,
+        timeout: float = REQUEST_TIMEOUT,
     ) -> dict:
         """Send a chat completion request; return the full response dict."""
         payload: dict[str, Any] = {
@@ -170,7 +190,7 @@ class LegalAgent:
             f"{self._base_url}/chat/completions",
             headers=self._headers(),
             json=payload,
-            timeout=REQUEST_TIMEOUT,
+            timeout=timeout,
         )
         resp.raise_for_status()
         return resp.json()
@@ -209,11 +229,175 @@ class LegalAgent:
         """Repair common citation bracket slips so the frontend can hyperlink."""
         text = str(answer or "")
         text = re.sub(r"\[\[([^\]\n]{1,260}?)[】］](?!\])", r"[[\1]]", text)
+        text = re.sub(r"\[\[\s*law_id\s*=\s*(\d+)\s*\|", r"[[\1|", text)
         return re.sub(
             r"\[\[([^|\]\n]+)\|([^|\]\n]+)\|([^|\]\n]+)\]\]",
             r"[[\1|\2|\3|]]",
             text,
         )
+
+    def _prioritize_bounded_results(
+        self, query: str, results: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        law_hints = [
+            (("刑事诉讼法", "刑诉法"), "中华人民共和国刑事诉讼法"),
+            (("民事诉讼法", "民诉法"), "中华人民共和国民事诉讼法"),
+            (("民法典",), "中华人民共和国民法典"),
+            (("公司法",), "中华人民共和国公司法"),
+            (("行政诉讼法",), "中华人民共和国行政诉讼法"),
+            (("刑法",), "中华人民共和国刑法"),
+        ]
+        explicit_law = ""
+        for aliases, law_name in law_hints:
+            if any(alias in query for alias in aliases):
+                explicit_law = law_name
+                break
+
+        def norm_name(item: dict[str, Any]) -> str:
+            return str(item.get("law_name", "") or "").strip("《》")
+
+        def rank(item: dict[str, Any]) -> tuple[float, float]:
+            name = norm_name(item)
+            annotation = str(item.get("annotation", "") or "")
+            score = float(item.get("rerank_score") or item.get("score") or 0)
+            boost = 0.0
+            if explicit_law and name == explicit_law:
+                boost += 100.0
+            elif explicit_law and explicit_law in name:
+                boost += 40.0
+            elif name.startswith("中华人民共和国"):
+                boost += 12.0
+            if annotation and annotation in query:
+                boost += 15.0
+            if "解释" in name:
+                boost += 5.0
+            return (boost, score)
+
+        return sorted(results, key=rank, reverse=True)
+
+    def _format_bounded_context(self, rag_data: dict[str, Any]) -> str:
+        lines = ["【已检索到的核心法条（按优先级排列，结果1为首要主依据）】"]
+        results = self._prioritize_bounded_results(
+            str(rag_data.get("query", "") or ""), rag_data.get("results", []) or []
+        )
+        for i, item in enumerate(results[:8], 1):
+            law_id = str(item.get("law_id", "")).strip()
+            law_name = str(item.get("law_name", "")).strip()
+            article_num = str(item.get("article_num", "")).strip()
+            annotation = str(item.get("annotation", "") or "").strip()
+            ref = f"[[{law_id}|{law_name}|{article_num}|{annotation}]]"
+            reasons = ", ".join(sorted(item.get("reasons", []) or []))
+            article_text = str(item.get("article_text", "") or "").replace("\n", " ")
+            prefix = "【首要主依据】" if i == 1 else ""
+            lines.append(f"结果{i}：{prefix}引用格式 {ref}")
+            if annotation:
+                lines.append(f"    考点：{annotation}")
+            if reasons:
+                lines.append(f"    检索路径：{reasons}")
+            if article_text:
+                lines.append(f"    正文：{article_text[:700]}")
+            incoming = item.get("incoming_citations", []) or []
+            if incoming:
+                snippets = []
+                for edge in incoming[:2]:
+                    src_id = str(edge.get("source_law_id", "") or "?")
+                    src_name = str(edge.get("source_law_name", "") or "")
+                    src_article = str(edge.get("source_article", "") or "")
+                    if src_id != "?" and src_name and src_article:
+                        snippets.append(f"[[{src_id}|{src_name}|{src_article}|]]")
+                if snippets:
+                    lines.append("    相关引用：" + "；".join(snippets))
+            lines.append("")
+        return "\n".join(lines).strip()
+
+    def _fallback_bounded_answer(self, rag_data: dict[str, Any]) -> str:
+        lines = ["## 结论", "已检索到以下核心依据，可作为本题作答框架：", ""]
+        for item in rag_data.get("results", [])[:5]:
+            law_id = str(item.get("law_id", "")).strip()
+            law_name = str(item.get("law_name", "")).strip()
+            article_num = str(item.get("article_num", "")).strip()
+            annotation = str(item.get("annotation", "") or "").strip()
+            article_text = str(item.get("article_text", "") or "").replace("\n", " ")
+            ref = f"[[{law_id}|{law_name}|{article_num}|{annotation}]]"
+            summary = article_text[:180]
+            lines.append(f"- {ref}：{summary}")
+        return self._normalize_answer_refs("\n".join(lines))
+
+    def _ensure_primary_ref(self, answer: str, rag_data: dict[str, Any]) -> str:
+        results = self._prioritize_bounded_results(
+            str(rag_data.get("query", "") or ""), rag_data.get("results", []) or []
+        )
+        if not results:
+            return answer
+        item = results[0]
+        law_id = str(item.get("law_id", "") or "").strip()
+        law_name = str(item.get("law_name", "") or "").strip()
+        article_num = str(item.get("article_num", "") or "").strip()
+        annotation = str(item.get("annotation", "") or "").strip()
+        if not law_id or not law_name or not article_num:
+            return answer
+        marker = f"[[{law_id}|{law_name}|{article_num}"
+        if marker in answer:
+            return answer
+        ref = f"[[{law_id}|{law_name}|{article_num}|{annotation}]]"
+        return f"核心依据：{ref}。\n\n{answer}"
+
+    def _run_bounded(
+        self,
+        question: str,
+        *,
+        verbose: bool = False,
+    ) -> dict[str, Any]:
+        from rag.service import run_rag_query
+
+        t0 = time.perf_counter()
+        rag_data = run_rag_query(
+            question,
+            top_k=10,
+            graph_expand_k=3,
+            compress=False,
+            use_llm_analysis=False,
+        )
+        context = self._format_bounded_context(rag_data)
+        tool_call_log = [
+            {
+                "round": 1,
+                "tool": "bounded_hybrid_search",
+                "args": json.dumps(
+                    {"query": question, "top_k": 10, "graph_expand_k": 3},
+                    ensure_ascii=False,
+                ),
+                "output_preview": context[:300],
+                "output_chars": len(context),
+                "history_chars": len(context),
+            }
+        ]
+        messages = [
+            {"role": "system", "content": _BOUNDED_FINAL_PROMPT},
+            {
+                "role": "user",
+                "content": f"用户问题：{question}\n\n{context}\n\n请给出最终答案。",
+            },
+        ]
+        try:
+            response = self._chat(messages, tools=None, max_tokens=1800, timeout=45.0)
+            answer = response["choices"][0]["message"].get("content") or ""
+            answer = self._normalize_answer_refs(answer)
+            answer = self._ensure_primary_ref(answer, rag_data)
+            messages.append(response["choices"][0]["message"])
+        except Exception as exc:
+            logger.warning("Bounded agent final synthesis failed (%s); using fallback.", exc)
+            answer = self._fallback_bounded_answer(rag_data)
+            answer = self._ensure_primary_ref(answer, rag_data)
+
+        if verbose:
+            logger.info("Bounded agent finished in %.2fs.", time.perf_counter() - t0)
+        return {
+            "answer": answer,
+            "rounds": 1,
+            "tool_calls": tool_call_log,
+            "messages": messages,
+        }
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -235,6 +419,9 @@ class LegalAgent:
         tool_calls  : list  — log of all tool calls and their outputs
         messages    : list  — full message history (for debugging)
         """
+        if os.getenv("AGENT_TOOL_LOOP", "0") != "1":
+            return self._run_bounded(question, verbose=verbose)
+
         messages: list[dict] = [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": question},

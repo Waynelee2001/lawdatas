@@ -237,7 +237,7 @@
       ".ai-related-list { display: flex; flex-direction: column; gap: 6px; }",
       ".ai-chat { flex: 1 1 0; min-height: 0; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; background: linear-gradient(180deg, rgba(253,251,246,.78) 0%, rgba(249,243,233,.94) 100%); }",
       ".ai-chat-empty { color: #876945; font-size: 13px; line-height: 1.8; padding: 14px 16px; border: 1px dashed rgba(180, 149, 97, .35); border-radius: 16px; background: rgba(255,255,255,.52); }",
-      ".ai-message { max-width: 94%; padding: 14px 15px; border-radius: 18px; line-height: 1.8; font-size: 14px; white-space: normal; word-break: break-word; }",
+      ".ai-message { box-sizing: border-box; max-width: 94%; padding: 14px 15px; border-radius: 18px; line-height: 1.8; font-size: 14px; white-space: normal; word-break: break-word; overflow: hidden; }",
       ".ai-message.user { align-self: flex-end; background: linear-gradient(135deg, #b98443 0%, #96662b 100%); color: #fffaf3; border-bottom-right-radius: 6px; box-shadow: 0 10px 24px rgba(145, 102, 43, .24); }",
       ".ai-message.assistant { align-self: flex-start; background: rgba(255,255,255,.94); color: #3f3325; border: 1px solid rgba(211, 195, 164, .6); border-bottom-left-radius: 6px; box-shadow: 0 10px 28px rgba(92, 73, 42, .07); }",
       ".ai-message-meta { font-size: 11px; color: #9a7c4f; margin-top: 8px; }",
@@ -256,7 +256,7 @@
       ".ai-msg-error { color: #b3372c; }",
       ".ai-message p { margin: 0 0 10px; }",
       ".ai-message p:last-child { margin-bottom: 0; }",
-      ".ai-markdown { line-height: 1.75; }",
+      ".ai-markdown { line-height: 1.75; max-width: 100%; overflow-wrap: anywhere; }",
       ".ai-markdown h4, .ai-markdown h5 { margin: 12px 0 8px; color: #6f4f24; font-weight: 700; line-height: 1.45; }",
       ".ai-markdown h4 { font-size: 15px; }",
       ".ai-markdown h5 { font-size: 14px; }",
@@ -266,9 +266,11 @@
       ".ai-markdown hr { border: 0; border-top: 1px dashed rgba(177,149,99,.34); margin: 14px 0; }",
       ".ai-markdown blockquote { margin: 10px 0; padding: 8px 10px; border-left: 3px solid #c9a86c; background: rgba(248,239,221,.55); color: #5f4b30; }",
       ".ai-markdown code { border: 1px solid rgba(214,198,170,.7); border-radius: 5px; background: rgba(248,239,221,.65); padding: 1px 5px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }",
+      ".ai-markdown pre { box-sizing: border-box; max-width: 100%; overflow-x: auto; white-space: pre-wrap; word-break: break-word; margin: 10px 0 14px; padding: 10px 12px; border: 1px solid rgba(214,198,170,.72); border-radius: 10px; background: rgba(255,253,248,.9); color: #6a5235; font-size: 12px; line-height: 1.55; }",
+      ".ai-markdown pre code { border: 0; background: transparent; padding: 0; font-size: inherit; }",
       ".ai-md-table-wrap { max-width: 100%; overflow-x: auto; margin: 10px 0 14px; border: 1px solid rgba(214,198,170,.72); border-radius: 10px; background: rgba(255,253,248,.9); }",
-      ".ai-md-table { width: 100%; min-width: 520px; border-collapse: collapse; font-size: 12px; line-height: 1.55; }",
-      ".ai-md-table th, .ai-md-table td { padding: 8px 10px; border-bottom: 1px solid rgba(214,198,170,.55); border-right: 1px solid rgba(214,198,170,.4); vertical-align: top; text-align: left; }",
+      ".ai-md-table { width: 100%; min-width: 0; table-layout: fixed; border-collapse: collapse; font-size: 12px; line-height: 1.55; }",
+      ".ai-md-table th, .ai-md-table td { padding: 8px 10px; border-bottom: 1px solid rgba(214,198,170,.55); border-right: 1px solid rgba(214,198,170,.4); vertical-align: top; text-align: left; word-break: break-word; overflow-wrap: anywhere; }",
       ".ai-md-table th:last-child, .ai-md-table td:last-child { border-right: 0; }",
       ".ai-md-table tr:last-child td { border-bottom: 0; }",
       ".ai-md-table th { background: #f3ead7; color: #6f4f24; font-weight: 700; white-space: nowrap; }",
@@ -1027,6 +1029,19 @@
       if (/^(?:-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
         html.push("<hr>");
         i++;
+        continue;
+      }
+      if (/^```/.test(trimmed)) {
+        var codeLines = [];
+        i++;
+        while (i < lines.length && !/^```/.test(lines[i].trim())) {
+          codeLines.push(lines[i]);
+          i++;
+        }
+        if (i < lines.length) i++;
+        html.push(
+          "<pre><code>" + this.escapeHtml(codeLines.join("\n")) + "</code></pre>",
+        );
         continue;
       }
       var heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
