@@ -670,7 +670,7 @@
           this.scrollChatToBottom();
         }.bind(this),
       );
-      assistantNode.innerHTML = this.renderAgentResult(result);
+      await this.streamAgentResult(assistantNode, result);
       this.sessionMessages.push({ role: "user", content: question });
       this.sessionMessages.push({
         role: "assistant",
@@ -786,7 +786,40 @@
     }
   };
 
-  AISidebar.prototype.renderAgentResult = function (data) {
+  AISidebar.prototype.streamAgentResult = async function (assistantNode, data) {
+    var answer = data && data.answer ? String(data.answer) : "未收到有效回答。";
+    var chars = Array.from(answer);
+    var signal = this.abortController && this.abortController.signal;
+    var partial = "";
+    assistantNode.classList.add("streaming");
+
+    for (var i = 0; i < chars.length; i += 10) {
+      if (signal && signal.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
+      partial += chars.slice(i, i + 10).join("");
+      var partialData = {};
+      for (var key in data) {
+        if (Object.prototype.hasOwnProperty.call(data, key)) {
+          partialData[key] = data[key];
+        }
+      }
+      partialData.answer = partial;
+      assistantNode.innerHTML = this.renderAgentResult(partialData, {
+        includeDetails: false,
+      });
+      this.scrollChatToBottom();
+      await this.delay(18, signal);
+    }
+
+    assistantNode.classList.remove("streaming");
+    assistantNode.innerHTML = this.renderAgentResult(data, { includeDetails: true });
+    this.scrollChatToBottom();
+  };
+
+  AISidebar.prototype.renderAgentResult = function (data, options) {
+    options = options || {};
+    var includeDetails = options.includeDetails !== false;
     var answer = data.answer || "未收到有效回答。";
     var toolCalls = data.tool_calls || [];
     var rounds = data.rounds || 0;
@@ -801,7 +834,7 @@
     html.push('<div class="ai-markdown">' + rendered.html + "</div>");
 
     // ---- Tool-call history (collapsible) ----------------------------
-    if (toolCalls.length) {
+    if (includeDetails && toolCalls.length) {
       var stepsId = "agentSteps_" + Date.now();
       html.push('<div class="ai-agent-steps">');
       html.push(
@@ -845,7 +878,9 @@
       html.push("</div>");
     }
 
-    html.push(this.renderSearchCountMeta(rendered.refs.length));
+    if (includeDetails) {
+      html.push(this.renderSearchCountMeta(rendered.refs.length));
+    }
 
     return html.join("");
   };
