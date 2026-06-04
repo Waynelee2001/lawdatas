@@ -493,7 +493,8 @@ def _start_agent_job(question: str, verbose: bool = False) -> str:
         "updated_at": now,
     }
     _write_agent_job(job_id, payload)
-    if os.getenv("AGENT_JOB_INLINE", "0") == "1":
+    inline_default = os.getenv("AGENT_BOUNDED", "0")
+    if os.getenv("AGENT_JOB_INLINE", inline_default) == "1":
         payload.update(
             {
                 "status": "running",
