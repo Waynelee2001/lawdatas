@@ -34,8 +34,13 @@
       "(第[一二三四五六七八九十百千万零○〇0-9]+" +
       "(?:[一二三四五六七八九十百千万零]+)?" +
       "条(?:之[一二三四五六七八九十百千万零]+)?)";
+    var locatorSuffixGroup =
+      "((?:第[一二三四五六七八九十百千万零○〇0-9]+[款项])*)";
     try {
-      _lawAutoLinkRe = new RegExp(nameGroup + articleGroup, "g");
+      _lawAutoLinkRe = new RegExp(
+        nameGroup + articleGroup + locatorSuffixGroup,
+        "g",
+      );
     } catch (e) {
       _lawAutoLinkRe = null;
     }
@@ -74,7 +79,88 @@
 
   function _isLinkableArticleNum(articleNum) {
     return /^第[一二三四五六七八九十百千万亿零○〇0-9]+条(?:之[一二三四五六七八九十百千万亿零○〇0-9]+)?$/.test(
-      String(articleNum || "").trim(),
+      _normalizeArticleNum(articleNum),
+    );
+  }
+
+  function _arabicToChineseNumber(value) {
+    var num = parseInt(value, 10);
+    if (!isFinite(num) || num <= 0) return String(value || "");
+    var digits = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
+
+    function sectionToChinese(section, omitLeadingOneTen) {
+      var units = [
+        { value: 1000, label: "千" },
+        { value: 100, label: "百" },
+        { value: 10, label: "十" },
+        { value: 1, label: "" },
+      ];
+      var text = "";
+      var zeroPending = false;
+      for (var i = 0; i < units.length; i++) {
+        var unit = units[i];
+        var digit = Math.floor(section / unit.value) % 10;
+        if (!digit) {
+          if (text && section % unit.value !== 0) zeroPending = true;
+          continue;
+        }
+        if (zeroPending) {
+          text += "零";
+          zeroPending = false;
+        }
+        if (!(omitLeadingOneTen && unit.value === 10 && digit === 1 && !text)) {
+          text += digits[digit];
+        }
+        text += unit.label;
+      }
+      return text || "零";
+    }
+
+    if (num < 10000) return sectionToChinese(num, true);
+    var high = Math.floor(num / 10000);
+    var low = num % 10000;
+    return (
+      sectionToChinese(high, false) +
+      "万" +
+      (low ? (low < 1000 ? "零" : "") + sectionToChinese(low, false) : "")
+    );
+  }
+
+  function _normalizeArticlePart(part) {
+    if (/^\d+$/.test(part)) return _arabicToChineseNumber(part);
+    return String(part || "").replace(/[○〇]/g, "零");
+  }
+
+  function _normalizeArticleLocator(articleNum) {
+    var text = String(articleNum || "").trim();
+    var main = text.match(
+      /^第([一二三四五六七八九十百千万亿零○〇0-9]+)条(?:之([一二三四五六七八九十百千万亿零○〇0-9]+))?((?:第[一二三四五六七八九十百千万亿零○〇0-9]+[款项])*)$/,
+    );
+    if (!main) return { article: text, suffix: "" };
+    function normalizePart(part) {
+      return _normalizeArticlePart(part);
+    }
+    var normalized = "第" + normalizePart(main[1]) + "条";
+    if (main[2]) normalized += "之" + normalizePart(main[2]);
+    var suffix = String(main[3] || "").replace(
+      /第([一二三四五六七八九十百千万亿零○〇0-9]+)([款项])/g,
+      function (_match, num, unit) {
+        return "第" + normalizePart(num) + unit;
+      },
+    );
+    return { article: normalized, suffix: suffix };
+  }
+
+  function _normalizeArticleNum(articleNum) {
+    return _normalizeArticleLocator(articleNum).article;
+  }
+
+  function _normalizeArticleSuffix(suffix) {
+    return String(suffix || "").replace(
+      /第([一二三四五六七八九十百千万亿零○〇0-9]+)([款项])/g,
+      function (_match, num, unit) {
+        return "第" + _normalizeArticlePart(num) + unit;
+      },
     );
   }
 
@@ -141,13 +227,15 @@
     while ((lawMatch = _lawAutoLinkRe.exec(text)) !== null) {
       var match = lawMatch[0];
       var lawName = lawMatch[1];
-      var articleNum = lawMatch[2];
+      var articleNum = _normalizeArticleNum(lawMatch[2]);
+      var articleSuffix = _normalizeArticleSuffix(lawMatch[3]);
       var lawId = _lawNameToId[lawName] || "";
       if (!lawId) continue;
       anchors.push({
         index: lawMatch.index,
         end: _lawAutoLinkRe.lastIndex,
-        replacement: "[[" + lawId + "|" + lawName + "|" + articleNum + "|]]",
+        replacement:
+          "[[" + lawId + "|" + lawName + "|" + articleNum + "|]]" + articleSuffix,
         lawId: lawId,
         lawName: lawName,
       });
@@ -191,18 +279,20 @@
     var linkable = boundaryIndex >= 0 ? text.slice(0, boundaryIndex) : text;
     var rest = boundaryIndex >= 0 ? text.slice(boundaryIndex) : "";
     var articleOnlyRe =
-      /(第[一二三四五六七八九十百千万零○〇0-9]+(?:[一二三四五六七八九十百千万零]+)?条(?:之[一二三四五六七八九十百千万零]+)?)/g;
+      /(第[一二三四五六七八九十百千万零○〇0-9]+(?:[一二三四五六七八九十百千万零]+)?条(?:之[一二三四五六七八九十百千万零]+)?)((?:第[一二三四五六七八九十百千万零○〇0-9]+[款项])*)/g;
     linkable = linkable.replace(
       articleOnlyRe,
-      function (_match, articleNum) {
+      function (_match, articleNum, articleSuffix) {
+        var canonicalArticle = _normalizeArticleNum(articleNum);
         return (
           "[[" +
           context.lawId +
           "|" +
           context.lawName +
           "|" +
-          articleNum +
-          "|]]"
+          canonicalArticle +
+          "|]]" +
+          _normalizeArticleSuffix(articleSuffix)
         );
       },
     );
@@ -1154,7 +1244,9 @@
       tokenized += String(text || "").slice(lastIndex, match.index);
       var lawId = String(match[1] || "").trim();
       var lawName = String(match[2] || "").trim();
-      var articleNum = String(match[3] || "").trim();
+      var locator = _normalizeArticleLocator(match[3]);
+      var articleNum = locator.article;
+      var articleSuffix = locator.suffix;
       var annotation = String(match[4] || "")
         .trim()
         .replace(/^\|+|\|+$/g, "");
@@ -1164,7 +1256,13 @@
       ].join(":");
       var token = "@@AILAWREF" + tokenIndex++ + "@@";
       if (!seen[key] || !_isLinkableArticleNum(articleNum)) {
-        tokenMap[token] = this.buildLawRef(lawId, lawName, articleNum, annotation);
+        tokenMap[token] = this.buildLawRef(
+          lawId,
+          lawName,
+          articleNum,
+          annotation,
+          articleSuffix,
+        );
       }
       if (_isLinkableArticleNum(articleNum) && !seen[key]) {
         refs.push({
@@ -1179,7 +1277,8 @@
           "《" +
             lawName +
             "》" +
-            articleNum,
+            articleNum +
+            articleSuffix,
         );
       }
       tokenized += token;
@@ -1493,15 +1592,22 @@
     lawName,
     articleNum,
     annotation,
+    articleSuffix,
   ) {
     lawId = String(lawId || "").trim();
     lawName = String(lawName || "").trim();
-    articleNum = String(articleNum || "").trim();
+    var locator = _normalizeArticleLocator(articleNum);
+    articleNum = locator.article;
+    articleSuffix =
+      articleSuffix == null
+        ? locator.suffix
+        : _normalizeArticleSuffix(articleSuffix);
     annotation = String(annotation || "")
       .trim()
       .replace(/^\|+|\|+$/g, "");
     if (!lawId || !lawName || !articleNum || !_isLinkableArticleNum(articleNum)) {
       var plain = lawName ? "《" + lawName + "》" + articleNum : articleNum;
+      plain += articleSuffix;
       if (annotation) plain += "【" + annotation + "】";
       return this.escapeHtml(plain || [lawName, articleNum].join(" ").trim());
     }
@@ -1512,7 +1618,11 @@
       displayName.replace(/^中华人民共和国/, "中华人民共和国") +
       "》" +
       articleNum;
-    if (annotation) label += "【" + annotation + "】";
+    var trailing = articleSuffix;
+    if (annotation) {
+      if (articleSuffix) trailing += "【" + annotation + "】";
+      else label += "【" + annotation + "】";
+    }
     return (
       '<span class="law-ref ai-law-ref" data-law-id="' +
       this.escapeAttr(lawId) +
@@ -1524,7 +1634,8 @@
       this.escapeAttr(full) +
       '">' +
       this.escapeHtml(label) +
-      "</span>"
+      "</span>" +
+      this.escapeHtml(trailing)
     );
   };
 

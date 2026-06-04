@@ -110,8 +110,10 @@ _SYSTEM_PROMPT = """\
 3. 标注字段可留空；留空时格式必须写成 [[law_id|法律名称|条号|]]，不要写成两个连续竖线
 4. 核心依据和直接用于推理的条文必须用 [[...]] 格式
 5. “条号”字段必须是具体条文，例如“第五十六条”“第三百一十一条”；章节、编、章、节、款、项、司法解释标题、制度标题不得写入 [[...]] 占位符
-6. 不要为了给外围、顺带、弱相关条文补链接而继续检索；如果没有 law_id 或具体条号，就不要把该内容作为可点击正式依据展开
-7. 禁止使用"《民法典》第X条"这种裸文本引用方式作为核心依据
+6. 条号必须完整复制工具结果里的中文数字写法；禁止把“第五百八十条”改写成“第580条”，也禁止“第5条”“第1121条”等阿拉伯数字条号
+7. 正文可以分析到“第五百八十条第二款”，但 [[...]] 的“条号”字段只写“第五百八十条”；“第二款”“第一项”等款项内容放在占位符后面作为普通文字
+8. 不要为了给外围、顺带、弱相关条文补链接而继续检索；如果没有 law_id 或具体条号，就不要把该内容作为可点击正式依据展开
+9. 禁止使用"《民法典》第X条"这种裸文本引用方式作为核心依据
 
 ## 回答要求
 - 先给出明确结论，再展开要件/情形分析
@@ -134,15 +136,17 @@ _FORCE_FINAL_PROMPT = """\
 2. 核心依据和直接用于推理的条文必须用 [[...]] 格式，禁止裸文本引用
 3. 只有具体“第X条”才能写成 [[...]]；“第X章”“第X节”“第四章第七节”这类章节层级只能作为普通文字说明，不能做链接
 4. 标注字段留空时只能写成 [[law_id|法律名称|条号|]]，不得写成 [[law_id|法律名称|条号||]]
-5. 区分：主要依据（核心法条）/ 司法解释细化 / 例外情形 / 程序衔接
-6. 先给结论，后展开分析，覆盖所有重要法条和司法解释
-7. 内容完整，优先呈现法考复习最需要的核心体系
-8. 单点问答只展开直接规则、认定规则和必要例外；不要扩展到其他主体、反向端点、后续制度或弱相关条文
-9. 可以使用 Markdown 标题、加粗、列表、引用和必要的短表格
-10. 禁止普通代码块和 ASCII/字符画图示，答案中不得出现“┌ ┐ └ ┘ │ ─ ├ ┤ ┬ ┴ ┼ ▼ ▲”等方框、横线或箭头拼出来的图；如确需图示，只能输出以 ```mermaid 开头的 Mermaid 图
-11. 不要输出“信息已经足够”“我来回答”等检索过程性句子，直接给答案
-12. 如果已经覆盖核心基本法条、主要司法解释/配套规范和程序衔接，应立即综合作答，不要继续穷尽外围条款
-13. 围绕用户问题核心取舍材料；图谱中弱相关、远相关节点不得展开
+5. 条号必须完整复制工具结果里的中文数字写法；禁止把“第五百八十条”改写成“第580条”，也禁止“第5条”“第1121条”等阿拉伯数字条号
+6. 正文可以分析到“第五百八十条第二款”，但 [[...]] 的“条号”字段只写“第五百八十条”；“第二款”“第一项”等款项内容放在占位符后面作为普通文字
+7. 区分：主要依据（核心法条）/ 司法解释细化 / 例外情形 / 程序衔接
+8. 先给结论，后展开分析，覆盖所有重要法条和司法解释
+9. 内容完整，优先呈现法考复习最需要的核心体系
+10. 单点问答只展开直接规则、认定规则和必要例外；不要扩展到其他主体、反向端点、后续制度或弱相关条文
+11. 可以使用 Markdown 标题、加粗、列表、引用和必要的短表格
+12. 禁止普通代码块和 ASCII/字符画图示，答案中不得出现“┌ ┐ └ ┘ │ ─ ├ ┤ ┬ ┴ ┼ ▼ ▲”等方框、横线或箭头拼出来的图；如确需图示，只能输出以 ```mermaid 开头的 Mermaid 图
+13. 不要输出“信息已经足够”“我来回答”等检索过程性句子，直接给答案
+14. 如果已经覆盖核心基本法条、主要司法解释/配套规范和程序衔接，应立即综合作答，不要继续穷尽外围条款
+15. 围绕用户问题核心取舍材料；图谱中弱相关、远相关节点不得展开
 """
 
 _BOUNDED_FINAL_PROMPT = """\
@@ -155,6 +159,8 @@ _BOUNDED_FINAL_PROMPT = """\
 - law_id、法律名称、条号必须从检索结果中复制，不得猜测
 - 只有具体“第X条”才能写成 [[...]]；章节、编、章、节、制度标题只能作为普通文字说明
 - 如果只是概括说明但没有 law_id，不要写成裸条文依据
+- 条号必须保留检索结果里的中文数字写法；禁止写“第580条”“第1121条”等阿拉伯数字条号
+- 可以说明到“第二款”“第一项”，但 [[...]] 的条号字段只放到“条”，款项紧跟在占位符后面写普通文字
 
 回答要求：
 - 先给明确结论，再分点说明
@@ -335,11 +341,14 @@ class LegalAgent:
     def _normalize_ref_placeholder(self, match: re.Match[str]) -> str:
         law_id = match.group(1).strip()
         law_name = match.group(2).strip()
-        article_num = match.group(3).strip()
+        article_num, article_suffix = self._split_article_locator(
+            match.group(3).strip()
+        )
         annotation = match.group(4).strip().strip("|")
         if self._is_linkable_article_num(article_num):
-            return f"[[{law_id}|{law_name}|{article_num}|{annotation}]]"
+            return f"[[{law_id}|{law_name}|{article_num}|{annotation}]]{article_suffix}"
         label = f"《{law_name}》{article_num}"
+        label += article_suffix
         if annotation:
             label += f"【{annotation}】"
         return label
@@ -428,11 +437,86 @@ class LegalAgent:
         return list(refs.values())
 
     @staticmethod
-    def _is_linkable_article_num(article_num: str) -> bool:
+    def _arabic_to_chinese_number(value: str) -> str:
+        try:
+            num = int(value)
+        except (TypeError, ValueError):
+            return str(value or "")
+        if num <= 0:
+            return str(value or "")
+        digits = "零一二三四五六七八九"
+
+        def section_to_chinese(section: int, omit_leading_one_ten: bool) -> str:
+            parts = ((1000, "千"), (100, "百"), (10, "十"), (1, ""))
+            text = ""
+            zero_pending = False
+            for unit, label in parts:
+                digit = section // unit % 10
+                if digit == 0:
+                    if text and section % unit != 0:
+                        zero_pending = True
+                    continue
+                if zero_pending:
+                    text += "零"
+                    zero_pending = False
+                if not (
+                    omit_leading_one_ten
+                    and unit == 10
+                    and digit == 1
+                    and not text
+                ):
+                    text += digits[digit]
+                text += label
+            return text or "零"
+
+        if num < 10000:
+            return section_to_chinese(num, True)
+        high, low = divmod(num, 10000)
+        return (
+            section_to_chinese(high, False)
+            + "万"
+            + (("零" if low < 1000 else "") + section_to_chinese(low, False) if low else "")
+        )
+
+    @classmethod
+    def _split_article_locator(cls, article_num: str) -> tuple[str, str]:
+        text = str(article_num or "").strip()
+        match = re.fullmatch(
+            r"第([一二三四五六七八九十百千万亿零〇○0-9]+)条"
+            r"(?:之([一二三四五六七八九十百千万亿零〇○0-9]+))?"
+            r"((?:第[一二三四五六七八九十百千万亿零〇○0-9]+[款项])*)",
+            text,
+        )
+        if not match:
+            return text, ""
+
+        def normalize_part(part: str | None) -> str:
+            if not part:
+                return ""
+            if re.fullmatch(r"\d+", part):
+                return cls._arabic_to_chinese_number(part)
+            return part.replace("〇", "零").replace("○", "零")
+
+        normalized = f"第{normalize_part(match.group(1))}条"
+        if match.group(2):
+            normalized += f"之{normalize_part(match.group(2))}"
+        suffix = re.sub(
+            r"第([一二三四五六七八九十百千万亿零〇○0-9]+)([款项])",
+            lambda m: f"第{normalize_part(m.group(1))}{m.group(2)}",
+            match.group(3) or "",
+        )
+        return normalized, suffix
+
+    @classmethod
+    def _normalize_article_num(cls, article_num: str) -> str:
+        return cls._split_article_locator(article_num)[0]
+
+    @classmethod
+    def _is_linkable_article_num(cls, article_num: str) -> bool:
         return bool(
             re.fullmatch(
                 r"第[一二三四五六七八九十百千万亿零〇○0-9]+条(?:之[一二三四五六七八九十百千万亿零〇○0-9]+)?",
-                str(article_num or "").strip(),
+                cls._normalize_article_num(article_num),
             )
         )
 
