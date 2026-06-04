@@ -53,3 +53,5 @@ services:
         value: "3072"
       - key: AGENT_TOOL_HISTORY_MAX_CHARS
         value: "0"
+      - key: AGENT_BOUNDED
+        value: "1"
