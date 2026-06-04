@@ -55,3 +55,5 @@ services:
         value: "0"
       - key: AGENT_BOUNDED
         value: "1"
+      - key: AGENT_JOB_INLINE
+        value: "1"

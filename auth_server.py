@@ -8,6 +8,7 @@ import os
 import secrets
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -350,6 +351,43 @@ def _run_agent_query_sync(question: str, verbose: bool = False) -> dict:
             return {"answer": proc.stdout.strip(), "rounds": 1, "tool_calls": []}
 
 
+def _run_agent_job_inline(
+    job_id: str, job_path: Path, question: str, verbose: bool = False
+) -> None:
+    payload = {
+        "job_id": job_id,
+        "status": "running",
+        "inline": True,
+        "worker_pid": os.getpid(),
+        "question": question,
+        "created_at": time.time(),
+        "started_at": time.time(),
+        "updated_at": time.time(),
+    }
+    _write_agent_job(job_id, payload)
+    try:
+        result = _run_agent_query_sync(question, verbose=verbose)
+        payload.update(
+            {
+                "status": "done",
+                "result": {
+                    "answer": result.get("answer", ""),
+                    "rounds": result.get("rounds", 0),
+                    "tool_calls": result.get("tool_calls", []),
+                },
+            }
+        )
+    except Exception as exc:
+        logger.exception("inline agent job failed")
+        payload.update(
+            {
+                "status": "error",
+                "error": f"Agent 查询失败: {str(exc)[:800]}",
+            }
+        )
+    _write_agent_job(job_id, payload)
+
+
 def _trim_agent_jobs(now: float | None = None) -> None:
     now = now or time.time()
     cutoff = now - AGENT_JOB_TTL_SECONDS
@@ -417,13 +455,19 @@ def _agent_job_snapshot(job_id: str) -> dict | None:
     if not payload:
         return None
     payload["job_id"] = job_id
-    if payload.get("status") in {"queued", "running"} and not _pid_alive(
-        payload.get("pid")
-    ):
-        payload["status"] = "error"
-        payload["updated_at"] = time.time()
-        payload["error"] = "Agent 后台任务进程已退出，请重新发起查询。"
-        _write_agent_job(job_id, payload)
+    if payload.get("status") in {"queued", "running"}:
+        if payload.get("inline"):
+            worker_pid = payload.get("worker_pid")
+            if worker_pid and int(worker_pid) != os.getpid():
+                payload["status"] = "error"
+                payload["updated_at"] = time.time()
+                payload["error"] = "Agent 后台任务所在服务已重启，请重新发起查询。"
+                _write_agent_job(job_id, payload)
+        elif not _pid_alive(payload.get("pid")):
+            payload["status"] = "error"
+            payload["updated_at"] = time.time()
+            payload["error"] = "Agent 后台任务进程已退出，请重新发起查询。"
+            _write_agent_job(job_id, payload)
     started_at = payload.get("started_at") or payload.get("created_at")
     payload["elapsed_seconds"] = round(max(0.0, time.time() - float(started_at)), 1)
     return payload
@@ -449,6 +493,25 @@ def _start_agent_job(question: str, verbose: bool = False) -> str:
         "updated_at": now,
     }
     _write_agent_job(job_id, payload)
+    if os.getenv("AGENT_JOB_INLINE", "0") == "1":
+        payload.update(
+            {
+                "status": "running",
+                "inline": True,
+                "worker_pid": os.getpid(),
+                "started_at": time.time(),
+                "updated_at": time.time(),
+            }
+        )
+        _write_agent_job(job_id, payload)
+        thread = threading.Thread(
+            target=_run_agent_job_inline,
+            args=(job_id, job_path, question, verbose),
+            daemon=True,
+            name=f"agent-job-{job_id[:8]}",
+        )
+        thread.start()
+        return job_id
     log_file = None
     try:
         log_file = open(log_path, "a", encoding="utf-8")
