@@ -564,10 +564,122 @@ class LegalAgent:
 
         return sorted(results, key=rank, reverse=True)
 
+    @staticmethod
+    def _is_time_question(query: str) -> bool:
+        return any(
+            token in query
+            for token in (
+                "什么时候",
+                "何时",
+                "开始",
+                "终止",
+                "起算",
+                "出生",
+                "死亡",
+                "期间",
+                "期限",
+                "届满",
+                "时间",
+            )
+        )
+
+    def _append_time_neighbor_context(
+        self, lines: list[str], query: str, results: list[dict[str, Any]]
+    ) -> None:
+        if not self._is_time_question(query) or not results:
+            return
+
+        try:
+            from rag.loader import build_article_corpus
+
+            seed_law_ids = {
+                str(item.get("law_id", "")).strip()
+                for item in results[:8]
+                if str(item.get("law_id", "")).strip()
+            }
+            corpus = build_article_corpus(law_ids=seed_law_ids or None)
+        except Exception as exc:
+            logger.warning("Failed to build adjacent time-rule context: %s", exc)
+            return
+
+        by_law: dict[str, list[Any]] = {}
+        for article in corpus:
+            by_law.setdefault(article.law_id, []).append(article)
+
+        index: dict[tuple[str, str], int] = {}
+        for law_id, articles in by_law.items():
+            for idx, article in enumerate(articles):
+                index[(law_id, article.article_num)] = idx
+
+        main_keys = {
+            (
+                str(item.get("law_id", "")).strip(),
+                str(item.get("article_num", "")).strip(),
+            )
+            for item in results[:15]
+        }
+        time_terms = (
+            "时间",
+            "出生",
+            "死亡",
+            "起算",
+            "期间",
+            "期限",
+            "届满",
+            "终止",
+            "开始",
+        )
+        extras: list[Any] = []
+        seen_extra: set[tuple[str, str]] = set()
+        for item in results[:8]:
+            law_id = str(item.get("law_id", "")).strip()
+            article_num = str(item.get("article_num", "")).strip()
+            articles = by_law.get(law_id) or []
+            pos = index.get((law_id, article_num))
+            if pos is None:
+                continue
+            for offset in (-2, -1, 1, 2):
+                neighbor_pos = pos + offset
+                if neighbor_pos < 0 or neighbor_pos >= len(articles):
+                    continue
+                neighbor = articles[neighbor_pos]
+                key = (neighbor.law_id, neighbor.article_num)
+                if key in main_keys or key in seen_extra:
+                    continue
+                searchable = " ".join(
+                    [
+                        neighbor.annotation,
+                        neighbor.chapter_annotation,
+                        neighbor.article_text[:260],
+                    ]
+                )
+                if not any(term in searchable for term in time_terms):
+                    continue
+                seen_extra.add(key)
+                extras.append(neighbor)
+                if len(extras) >= 8:
+                    break
+            if len(extras) >= 8:
+                break
+
+        if not extras:
+            return
+
+        lines.append("【时间认定/相邻配套规则（用于避免漏掉起算、出生、死亡等认定条文）】")
+        for article in extras:
+            ref = (
+                f"[[{article.law_id}|{article.law_name}|"
+                f"{article.article_num}|{article.annotation}]]"
+            )
+            lines.append(f"- {ref}")
+            lines.append(f"  正文：{article.article_text[:260].replace(chr(10), ' ')}")
+        lines.append("")
+
     def _format_bounded_context(self, rag_data: dict[str, Any]) -> str:
+        query = str(rag_data.get("query", "") or "")
         lines = ["【已检索到的核心法条（按优先级排列，结果1为首要主依据）】"]
         results = self._prioritize_bounded_results(
-            str(rag_data.get("query", "") or ""), rag_data.get("results", []) or []
+            query, rag_data.get("results", []) or []
         )
         for i, item in enumerate(results[:15], 1):
             law_id = str(item.get("law_id", "")).strip()
@@ -597,6 +709,7 @@ class LegalAgent:
                 if snippets:
                     lines.append("    相关引用：" + "；".join(snippets))
             lines.append("")
+        self._append_time_neighbor_context(lines, query, results)
         return "\n".join(lines).strip()
 
     def _fallback_bounded_answer(self, rag_data: dict[str, Any]) -> str:
